@@ -34,6 +34,10 @@ yarn-error.log*
 .env*
 !.env.example
 
+# real staff data (Kenya DPA) — only scripts/staff.example.csv (synthetic)
+# may ever be committed
+seed-data/
+
 # vercel
 .vercel
 
