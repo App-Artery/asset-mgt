@@ -5,6 +5,7 @@ import Resend from "next-auth/providers/resend";
 import { authConfig } from "@/auth.config";
 import { getDb } from "@/lib/db";
 import { env } from "@/lib/env";
+import { isSignInAllowed } from "@/lib/sign-in-policy";
 
 /**
  * Full Auth.js configuration for Node contexts (route handlers, server
@@ -26,22 +27,21 @@ export const { handlers, auth, signIn, signOut } = NextAuth(() => ({
     Resend({
       apiKey: env().AUTH_RESEND_KEY,
       from: env().AUTH_EMAIL_FROM,
+      // Magic-link TTL 15 minutes: delivery is seconds; the Auth.js 24h
+      // default is needless exposure (AM-01 design).
+      maxAge: 15 * 60,
     }),
   ],
   callbacks: {
     ...authConfig.callbacks,
-    // No open signup: only emails already provisioned in the User table may
-    // sign in. The adapter would otherwise auto-create users on first
-    // magic-link request. Staff are seeded (AM-01), never self-registered.
-    async signIn({ user }) {
-      if (!user.email) {
-        return false;
-      }
-      const provisioned = await getDb().user.findUnique({
-        where: { email: user.email },
-        select: { id: true },
+    // No open signup: magic links issue only for provisioned, active users,
+    // and send bursts are throttled (src/lib/sign-in-policy.ts). All
+    // rejections return false — indistinguishable AccessDenied — because the
+    // uniform /signin UX must not leak which addresses are registered.
+    async signIn({ user, email }) {
+      return isSignInAllowed(getDb(), user.email, {
+        verificationRequest: email?.verificationRequest === true,
       });
-      return provisioned !== null;
     },
   },
 }));

@@ -19,6 +19,7 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
+    "db:seed": "dotenv -- tsx scripts/seed-staff.ts",
     "postinstall": "prisma generate",
     "prepare": "husky"
   },
@@ -26,6 +27,7 @@
     "onlyBuiltDependencies": [
       "@prisma/client",
       "@prisma/engines",
+      "esbuild",
       "prisma",
       "sharp",
       "unrs-resolver"
@@ -62,6 +64,7 @@
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "dotenv-cli": "^11.0.0",
     "eslint": "^9",
     "eslint-config-next": "15.5.22",
     "eslint-config-prettier": "^10.1.8",
@@ -71,6 +74,7 @@
     "prettier": "^3.5.0",
     "prisma": "^6.19.3",
     "tailwindcss": "^4",
+    "tsx": "^4.23.1",
     "typescript": "^5",
     "vitest": "^4.1.10"
   }

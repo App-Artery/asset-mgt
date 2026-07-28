@@ -26,6 +26,9 @@ export class AuthorizationError extends Error {
  * - Actor identity comes from the session (never from client input).
  * - The role is read from the DB on every call — never from the JWT — which
  *   is what makes role changes effective without redeploy (AM-01 AC).
+ * - A deactivated user is unauthorized regardless of role: this is the leaver
+ *   kill-switch for live JWT sessions, and it works precisely because status
+ *   is DB-read per request, never trusted from the token.
  * - Unauthenticated → redirect to sign-in. Wrong role → AuthorizationError.
  */
 export async function requireRole(
@@ -34,13 +37,13 @@ export async function requireRole(
   const session = await auth();
   const userId = session?.user?.id;
   if (!userId) {
-    redirect("/api/auth/signin");
+    redirect("/signin");
   }
   const user = await getDb().user.findUnique({
     where: { id: userId },
-    select: { role: true },
+    select: { role: true, deactivatedAt: true },
   });
-  if (!user || !allowed.includes(user.role)) {
+  if (!user || user.deactivatedAt !== null || !allowed.includes(user.role)) {
     throw new AuthorizationError(allowed);
   }
   return { userId, role: user.role };

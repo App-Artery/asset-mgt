@@ -14,5 +14,12 @@ import { authConfig } from "@/auth.config";
 export default NextAuth(authConfig).auth;
 
 export const config = {
-  matcher: ["/((?!api/auth|_next/static|_next/image|favicon\\.ico).*)"],
+  // /signin is the ONLY public page (uniform magic-link flow, AM-01);
+  // everything else stays behind the deny-by-default session gate. The
+  // signin and api/auth exclusions are anchored with (?:/|$) so only the
+  // exact segment (and its children, for api/auth) is public — a future
+  // /signin-foo or /api/auth-foo route stays gated (advisor condition).
+  matcher: [
+    "/((?!api/auth(?:/|$)|signin(?:/|$)|_next/static|_next/image|favicon\\.ico).*)",
+  ],
 };

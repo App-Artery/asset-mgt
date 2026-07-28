@@ -50,6 +50,13 @@ enum AssetEventType {
   CORRECTION
 }
 
+enum UserEventType {
+  CREATED
+  ROLE_CHANGED
+  DEACTIVATED
+  REACTIVATED
+}
+
 model Asset {
   id            String          @id @default(cuid())
   // Client's own numeric tag scheme: unique at the DB level, nullable until delivery.
@@ -155,13 +162,38 @@ model User {
   emailVerified DateTime?
   image         String?
   role          Role         @default(STAFF_RO)
+  // Deactivation is a flag, NEVER a delete — deleting a User would sever
+  // AssetEvent actor attribution. Checked in both the signIn callback (blocks
+  // new sessions) and requireRole (kills live JWT sessions at next request).
+  deactivatedAt DateTime?
   personId      String?      @unique
   person        Person?      @relation(fields: [personId], references: [id])
-  accounts     Account[]
-  sessions     Session[]
-  assetEvents  AssetEvent[]
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  accounts      Account[]
+  sessions      Session[]
+  assetEvents   AssetEvent[]
+  events        UserEvent[]  @relation("UserEventSubject")
+  actedEvents   UserEvent[]  @relation("UserEventActor")
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+}
+
+// Append-only audit trail (same rule as AssetEvent): rows are only ever
+// inserted and read — no update/delete path may ever be written against it;
+// corrections are new events. actorId null = system action (seed script).
+model UserEvent {
+  id       String        @id @default(cuid())
+  userId   String
+  user     User          @relation("UserEventSubject", fields: [userId], references: [id])
+  // Restrict, not SetNull: deleting a User must never silently blank audit
+  // attribution (users are deactivated, never deleted — advisor condition).
+  actorId  String?
+  actor    User?         @relation("UserEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+  type     UserEventType
+  fromRole Role?
+  toRole   Role?
+  at       DateTime      @default(now())
+
+  @@index([userId, at])
 }
 
 model Account {
@@ -194,6 +226,9 @@ model VerificationToken {
   identifier String
   token      String   @unique
   expires    DateTime
+  // Adapter inserts ignore this column (default fills it); it exists so the
+  // sign-in throttle windows are computable (src/lib/sign-in-policy.ts).
+  createdAt  DateTime @default(now())
 
   @@unique([identifier, token])
 }

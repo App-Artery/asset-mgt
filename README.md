@@ -16,12 +16,21 @@ pnpm install                 # also runs prisma generate
 cp .env.example .env         # fill in real values; never commit .env
 docker compose up -d         # Postgres 17 (+ asset_mgt_test database)
 pnpm db:migrate              # apply migrations to the dev database
+SEED_ADMIN_EMAIL=you@example.com STAFF_CSV=scripts/staff.example.csv pnpm db:seed
 pnpm dev                     # http://localhost:3000
 ```
 
-Everything is auth-gated (deny-by-default middleware); until AM-01 seeds
-users, pages redirect to the sign-in route. `GET /health` returns build info
-once authenticated.
+Everything is auth-gated (deny-by-default middleware); `/signin` is the only
+public page. Users are provisioned by seed or by an admin — there is no open
+signup. `GET /health` returns build info once authenticated.
+
+`pnpm db:seed` loads `.env` (so it targets whatever `DATABASE_URL` points at)
+and explicit env vars override it — always pass a local `DATABASE_URL` when
+seeding the Docker database if your `.env` holds the production string. It
+refuses to run without `SEED_ADMIN_EMAIL`, creates-or-promotes that user to
+`ADMIN_IT`, never downgrades an existing role, and is idempotent. A real
+staff CSV is personal data: keep it in `seed-data/` (gitignored) — only the
+synthetic `scripts/staff.example.csv` may be committed.
 
 ### Scripts
 
@@ -31,6 +40,7 @@ once authenticated.
 | `pnpm lint` / `pnpm typecheck`                            | ESLint (flat config) / `tsc --noEmit`                                                                |
 | `pnpm test`                                               | Vitest. Real-DB integration tests run only when `TEST_DATABASE_URL` is set — with it unset they skip |
 | `pnpm db:migrate` / `pnpm db:deploy` / `pnpm db:generate` | Prisma migrate dev / deploy / generate                                                               |
+| `pnpm db:seed`                                            | Seed staff + first admin (needs `SEED_ADMIN_EMAIL`; optional `STAFF_CSV`)                            |
 | `pnpm format`                                             | Prettier over the repo                                                                               |
 
 Husky runs lint-staged on commit and full-repo lint + typecheck on push. CI
@@ -64,9 +74,14 @@ record — keep all three current when anything here changes.
    live only in Vercel env vars and gitignored `.env`.
 5. **Migrations** — run `pnpm db:deploy` against the Neon `DATABASE_URL` at
    provisioning (and on schema changes until a deploy pipeline owns it).
-6. **Deploy** — push to `main`; verify `/health` on the production URL
-   (expect a redirect to sign-in when unauthenticated — the app is
-   deny-by-default; the JSON body needs a session).
+6. **Deploy and seed** — push to `main`. Then provision users against Neon:
+   `DATABASE_URL=<neon-pooled-url> SEED_ADMIN_EMAIL=<org-admin-mailbox> STAFF_CSV=seed-data/staff.csv pnpm db:seed`
+   (the admin mailbox must be an org mailbox with MFA — client obligation,
+   AM-01 design). Sign in at `/signin` with the admin email via magic link
+   (needs the verified Resend domain from step 3), then verify `/health`
+   returns JSON while authenticated and confirm `/admin/users` lists the
+   seeded staff. Unauthenticated requests redirect to `/signin` — that is
+   the deny-by-default gate working.
 7. **Nightly backups — REQUIRED before AM-04 cutover sign-off** (advisor
    condition): set the `DATABASE_URL` repo secret in GitHub
    (Settings → Secrets → Actions) to the Neon connection string, then run the
