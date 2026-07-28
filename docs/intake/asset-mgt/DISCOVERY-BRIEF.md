@@ -50,7 +50,7 @@ Software licence management; depreciation/accounting; procurement workflows (POs
 - Deadline: Asset Tiger pricing change. **Effective date unknown — obtaining it is the first client action (see §10).** Milestone 1 of the PRD is scoped as the minimum cutover path.
 - Kenya Data Protection Act 2019 applies: the system stores staff name, email, and an identifier.
 - Run cost must be credibly lower than the subscription being escaped — near-zero at idle. This constrains hosting shape (see flags below).
-- Studio spine: AWS + Terraform.
+- Studio spine: AWS + Terraform — **deviation accepted (v1.1):** this build ships on Vercel + Neon Postgres, and Terraform is not used. Justified by cost (free scale-to-zero tiers vs AWS's single-digit dollars); recorded as a risky decision in `SOLUTION.md`.
 
 **Open assumptions (client to confirm; none block Milestone 1 start)**
 
@@ -62,9 +62,9 @@ Software licence management; depreciation/accounting; procurement workflows (POs
 
 **Architectural flags (≥30% cost/feasibility impact → ADR recommended)**
 
-- **Hosting shape:** scale-to-zero serverless vs always-on. An always-on minimal AWS footprint (~$25–40/month) would cost *more* than the subscription being escaped; serverless with scale-to-zero keeps idle cost near storage-only. ADR at scaffold.
+- **Hosting shape (resolved v1.1):** Vercel + Neon Postgres, both on scale-to-zero free tiers → $0/month at this usage. The always-on-vs-serverless question is closed. The surviving risk is Vercel Hobby's non-commercial-use term — accepted and named in `SOLUTION.md`; mitigation is Pro at $20/month, which is cost parity with the subscription being escaped. ADR at scaffold.
 - **Auth approach:** org SSO vs app-local accounts. Security-touching — floors at Tier 3 with mandatory advisor review.
-- **AWS region:** af-south-1 (proximity) vs eu-west-1 (service breadth/cost), with Kenya DPA cross-border transfer safeguards documented either way. Decide at scaffold.
+- **Hosting region:** Vercel function region and Neon region colocated in the EU (e.g. `fra1` + Neon `eu-central-1`) — Neon offers no Africa region, so the af-south-1 proximity option is gone. Kenya DPA cross-border transfer safeguards documented at scaffold, exact regions decided there.
 
 ## 8. Strategic fit
 
@@ -88,4 +88,5 @@ Software licence management; depreciation/accounting; procurement workflows (POs
 
 ## Changelog
 
+- **2026-07-28 v1.1** — Hosting retargeted: AWS (Lambda + CloudFront + Aurora Serverless v2 + SES, Terraform) → Vercel + Neon Postgres + Resend, no Terraform (studio-spine deviation accepted). Run cost drops to $0/month on free tiers; Vercel Hobby commercial-use ToS risk accepted and named in `SOLUTION.md`. Trigger: client directive to deploy on Vercel with a cheaper database.
 - **2026-07-24 v1.0** — Created after two discovery rounds plus gap close-out (trigger: Asset Tiger pricing-model change; jurisdiction: Kenya). Open: Asset Tiger annual cost; pricing-change date; "ID" semantics; org IdP.

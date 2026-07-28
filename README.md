@@ -9,7 +9,7 @@ Cloud-based IT asset lifecycle management — an internal tool replacing Asset T
 | Document | Purpose |
 | --- | --- |
 | [Discovery Brief](docs/intake/asset-mgt/DISCOVERY-BRIEF.md) | The problem, users, scope, build-vs-adopt decision, open assumptions |
-| [Solution Sketch](docs/intake/asset-mgt/SOLUTION.md) | Technical shape: Next.js 15, Prisma/Postgres, Auth.js, PWA, Terraform/AWS |
+| [Solution Sketch](docs/intake/asset-mgt/SOLUTION.md) | Technical shape: Next.js 15, Prisma/Postgres (Neon), Auth.js, PWA, Vercel |
 | [PRD](docs/intake/asset-mgt/PRD.md) | Seven stories in two milestones; Milestone 1 is the Asset Tiger cutover path |
 
 ## Next steps
