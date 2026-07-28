@@ -18,7 +18,7 @@ Seed-based provisioning **plus a minimal admin users screen** — list, add (cre
 
 **Sign-in (custom page, uniform response).** One email field. Every outcome — link sent, unknown email, deactivated user, throttled — returns the same "if your address is registered, a link has been sent" message; the default Auth.js pages are an enumeration oracle (unknown → visible AccessDenied) and are not used. Error page mapping stays generic.
 
-**Throttle (Postgres-backed, no new infra).** In the existing `signIn` callback, count recent `VerificationToken` rows: max 3 requests per email per 15 min, global cap ~30/hour. The Resend 100/day cap is the DoS _target_ (burning it locks all staff out during cutover week), not a defence.
+**Throttle (Postgres-backed, no new infra).** In the existing `signIn` callback, count recent `VerificationToken` rows: max 3 requests per email per 15 min; global caps 30/hour **and ~80 per rolling 24h** (security review condition — 30/h sustained is 720/day, so the hourly cap alone cannot protect the quota). The Resend 100/day cap is the DoS _target_ (burning it locks all staff out during cutover week), not a defence.
 
 **Seed.** Idempotent script: reads a **gitignored** staff CSV (path via env/arg; real names+emails are Kenya-DPA personal data and never enter the repo — a synthetic example CSV ships instead) → creates Person+User rows, emails lowercased. First admin via `SEED_ADMIN_EMAIL`: creates-or-promotes exactly that user to `ADMIN_IT`; refuses to run unset; never downgrades an existing admin; no admin identity hardcoded. Residual risk is the admin mailbox itself — **client must keep it an org mailbox with MFA** (named client responsibility).
 
@@ -45,3 +45,11 @@ JWT `maxAge` **14 days** (identity only — roles/active-status are DB-read per 
 ## Out of scope
 
 Invites, bulk operations, SSO (open assumption — arrives if the client IdP materialises), password anything, org-mailbox MFA (client obligation), Resend domain verification (runbook item — must be done before UAT).
+
+## Residual risks (accepted — advisor security review, 2026-07-28)
+
+- **Timing-based enumeration on /signin.** The rendered outcome is uniform, but a registered address does marginally more DB work than an unknown one. Accepted: the leaked bit is low-value (staff emails follow a guessable org pattern anyway) and the throttle impedes measurement at scale. Explicitly NO artificial delay padding — it complicates the code for an attacker model this tool doesn't face.
+- **/health build metadata visible to a deactivated live-JWT holder for up to 14 days.** `requireRole` kills every role-gated surface at next request; `/health` is behind the session gate only. Accepted: version/region/commit metadata is non-sensitive.
+- **Sign-in new-link DoS under sustained attack.** An attacker who keeps the global windows saturated blocks NEW magic links (existing sessions unaffected, staff sessions last 14 days). Accepted: the alternative — no global cap — burns the Resend quota, which is the worse outage.
+- **Admin mailbox is the root of trust.** Whoever reads the admin's email can become ADMIN_IT. Client obligation (named in this design): the seed admin address must be an org mailbox with MFA.
+- **Vercel Hobby ToS risk** — accepted at intake (ADR-001), unchanged by this story.

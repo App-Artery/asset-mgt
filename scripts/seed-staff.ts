@@ -120,6 +120,16 @@ export async function seedStaff(
     const existingAdmin = await tx.user.findUnique({
       where: { email: adminEmail },
     });
+    // Fail loudly instead of "promoting" a user who cannot sign in: a
+    // deactivated admin target would let the seed complete with zero active
+    // admins — a bootstrap deadlock. The seed still never reactivates
+    // (advisor condition); that stays a deliberate act in /admin/users.
+    if (existingAdmin?.deactivatedAt) {
+      throw new Error(
+        "SEED_ADMIN_EMAIL user is deactivated — reactivate via /admin/users " +
+          "or choose another admin email.",
+      );
+    }
     if (!existingAdmin) {
       const person = await tx.person.upsert({
         where: { email: adminEmail },

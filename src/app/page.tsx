@@ -16,16 +16,20 @@ export default async function HomePage() {
     where: { id: session.user.id },
     select: { name: true, email: true, role: true, deactivatedAt: true },
   });
-  const isActiveAdmin =
-    user !== null && user.role === "ADMIN_IT" && user.deactivatedAt === null;
+  // A deactivated (or deleted) user holding a still-valid JWT gets no page,
+  // matching requireRole's kill-switch (advisor condition).
+  if (!user || user.deactivatedAt !== null) {
+    redirect("/signin");
+  }
+  const isActiveAdmin = user.role === "ADMIN_IT";
 
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col items-center justify-center gap-4 p-8">
       <h1 className="text-3xl font-semibold tracking-tight">Asset Register</h1>
       <p className="text-sm">
         Signed in as{" "}
-        <span className="font-medium">{user?.name ?? user?.email}</span>{" "}
-        <span className="text-muted-foreground">({user?.role})</span>
+        <span className="font-medium">{user.name ?? user.email}</span>{" "}
+        <span className="text-muted-foreground">({user.role})</span>
       </p>
       {isActiveAdmin ? (
         <Link

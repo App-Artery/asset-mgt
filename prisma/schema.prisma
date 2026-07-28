@@ -184,8 +184,10 @@ model UserEvent {
   id       String        @id @default(cuid())
   userId   String
   user     User          @relation("UserEventSubject", fields: [userId], references: [id])
+  // Restrict, not SetNull: deleting a User must never silently blank audit
+  // attribution (users are deactivated, never deleted — advisor condition).
   actorId  String?
-  actor    User?         @relation("UserEventActor", fields: [actorId], references: [id])
+  actor    User?         @relation("UserEventActor", fields: [actorId], references: [id], onDelete: Restrict)
   type     UserEventType
   fromRole Role?
   toRole   Role?

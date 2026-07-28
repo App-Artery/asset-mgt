@@ -16,12 +16,17 @@ import type { PrismaClient } from "@prisma/client";
 export const PER_EMAIL_LIMIT = 3;
 export const PER_EMAIL_WINDOW_MS = 15 * 60 * 1000;
 /**
- * Global cap across all addresses. The Resend free tier (100 emails/day) is
+ * Global caps across all addresses. The Resend free tier (100 emails/day) is
  * the DoS target during cutover week — burning it locks all staff out — so
- * the cap protects the quota, not any single mailbox.
+ * the caps protect the quota, not any single mailbox. Two windows because
+ * the hourly cap alone does not bound the day: 30/hour sustained is 720/day
+ * (advisor condition) — the rolling 24h cap keeps the worst case under the
+ * quota.
  */
 export const GLOBAL_LIMIT = 30;
 export const GLOBAL_WINDOW_MS = 60 * 60 * 1000;
+export const GLOBAL_DAILY_LIMIT = 80;
+export const GLOBAL_DAILY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export async function isSignInAllowed(
   db: PrismaClient,
@@ -49,7 +54,7 @@ export async function isSignInAllowed(
   // request's token, so the limit means "at most N sends per window".
   if (verificationRequest) {
     const now = Date.now();
-    const [perEmail, global] = await Promise.all([
+    const [perEmail, globalHourly, globalDaily] = await Promise.all([
       db.verificationToken.count({
         where: {
           identifier: email,
@@ -59,8 +64,15 @@ export async function isSignInAllowed(
       db.verificationToken.count({
         where: { createdAt: { gte: new Date(now - GLOBAL_WINDOW_MS) } },
       }),
+      db.verificationToken.count({
+        where: { createdAt: { gte: new Date(now - GLOBAL_DAILY_WINDOW_MS) } },
+      }),
     ]);
-    if (perEmail >= PER_EMAIL_LIMIT || global >= GLOBAL_LIMIT) {
+    if (
+      perEmail >= PER_EMAIL_LIMIT ||
+      globalHourly >= GLOBAL_LIMIT ||
+      globalDaily >= GLOBAL_DAILY_LIMIT
+    ) {
       return false;
     }
   }

@@ -30,8 +30,8 @@ ADR: `docs/adr/ADR-001-vercel-neon-stack.md` · Stories: `docs/intake/asset-mgt/
 - **Emails are lowercased at every write and lookup** (sign-in policy, admin
   actions, seed). A case mismatch silently locks staff out.
 - **Sign-in throttle lives in `src/lib/sign-in-policy.ts`**, counting
-  `VerificationToken.createdAt` rows (3/email/15 min, 30 global/hour), called
-  from the `signIn` callback in `src/auth.ts`. Every sign-in rejection is an
+  `VerificationToken.createdAt` rows (3/email/15 min; global 30/hour and
+  ~80/rolling 24h), called from the `signIn` callback in `src/auth.ts`. Every sign-in rejection is an
   indistinguishable `false` — /signin renders one uniform message for all
   outcomes; never add distinct error surfaces to that flow.
 - **`Person.employeeRef`, never a national ID** — no national-ID column may be

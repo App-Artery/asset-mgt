@@ -8,7 +8,10 @@ import { randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  GLOBAL_DAILY_LIMIT,
+  GLOBAL_DAILY_WINDOW_MS,
   GLOBAL_LIMIT,
+  GLOBAL_WINDOW_MS,
   PER_EMAIL_LIMIT,
   PER_EMAIL_WINDOW_MS,
   isSignInAllowed,
@@ -145,9 +148,9 @@ describe.skipIf(!testDatabaseUrl)("sign-in policy (real DB)", () => {
     ).resolves.toBe(true);
   });
 
-  // LAST in this file: floods the global window, which would trip the
-  // per-email "allowed" assertions above if it ran first.
-  it("trips the global throttle at the limit", async () => {
+  // The global tests run LAST in this file: they flood the global windows,
+  // which would trip the per-email "allowed" assertions above if run first.
+  it("trips the global hourly throttle at the limit", async () => {
     await db.verificationToken.deleteMany({});
     const email = uniqueEmail();
     await provisionUser(email);
@@ -157,5 +160,37 @@ describe.skipIf(!testDatabaseUrl)("sign-in policy (real DB)", () => {
     await expect(
       isSignInAllowed(db, email, { verificationRequest: true }),
     ).resolves.toBe(false);
+  });
+
+  it("trips the rolling-24h global throttle even when the hourly window is quiet", async () => {
+    // Tokens 2h old: outside the hourly window, inside the daily one — so
+    // only the 24h cap can reject here. If the daily count is ever removed,
+    // this goes red while the hourly test stays green (advisor condition:
+    // 30/h sustained is 720/day vs the 100/day Resend quota).
+    await db.verificationToken.deleteMany({});
+    const email = uniqueEmail();
+    await provisionUser(email);
+    const twoHoursAgo = new Date(Date.now() - 2 * GLOBAL_WINDOW_MS);
+    for (let i = 0; i < GLOBAL_DAILY_LIMIT - 1; i += 1) {
+      await insertTokens(uniqueEmail(), 1, twoHoursAgo);
+    }
+    await expect(
+      isSignInAllowed(db, email, { verificationRequest: true }),
+    ).resolves.toBe(true);
+
+    await insertTokens(uniqueEmail(), 1, twoHoursAgo);
+    await expect(
+      isSignInAllowed(db, email, { verificationRequest: true }),
+    ).resolves.toBe(false);
+
+    // Tokens older than 24h drop out of the window again.
+    await db.verificationToken.deleteMany({});
+    const stale = new Date(Date.now() - GLOBAL_DAILY_WINDOW_MS - 60 * 1000);
+    for (let i = 0; i < GLOBAL_DAILY_LIMIT; i += 1) {
+      await insertTokens(uniqueEmail(), 1, stale);
+    }
+    await expect(
+      isSignInAllowed(db, email, { verificationRequest: true }),
+    ).resolves.toBe(true);
   });
 });

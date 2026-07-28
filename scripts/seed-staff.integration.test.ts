@@ -173,4 +173,42 @@ describe.skipIf(!testDatabaseUrl)("seedStaff (real DB)", () => {
       seedStaff(db, { adminEmail: "   ", rows: [] }),
     ).rejects.toThrow(/SEED_ADMIN_EMAIL/);
   });
+
+  it("fails loudly on a deactivated admin target instead of seeding a dead admin", async () => {
+    // Promoting (or accepting) a deactivated user would let the seed exit 0
+    // with zero active admins — a bootstrap deadlock (advisor condition).
+    const email = `seed-deactivated-${randomUUID()}@example.com`;
+    await db.user.create({
+      data: {
+        email,
+        name: "Left Company",
+        role: Role.STAFF_RO,
+        deactivatedAt: new Date(),
+      },
+    });
+
+    await expect(
+      seedStaff(db, { adminEmail: email, rows: [] }),
+    ).rejects.toThrow(/deactivated/);
+
+    // Neither promoted nor reactivated — the seed never reactivates.
+    const after = await db.user.findUniqueOrThrow({ where: { email } });
+    expect(after.role).toBe(Role.STAFF_RO);
+    expect(after.deactivatedAt).not.toBeNull();
+
+    // Same failure when the target is already ADMIN_IT but deactivated
+    // (previously a silent no-op "success").
+    const adminEmail = `seed-deactivated-admin-${randomUUID()}@example.com`;
+    await db.user.create({
+      data: {
+        email: adminEmail,
+        name: "Former Admin",
+        role: Role.ADMIN_IT,
+        deactivatedAt: new Date(),
+      },
+    });
+    await expect(seedStaff(db, { adminEmail, rows: [] })).rejects.toThrow(
+      /deactivated/,
+    );
+  });
 });

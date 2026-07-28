@@ -30,8 +30,20 @@ export async function requestSignIn(
   if (parsed.success) {
     try {
       await signIn("resend", { email: parsed.data, redirect: false });
-    } catch {
-      // Intentionally identical to success — see above.
+    } catch (error) {
+      // Rendered outcome stays identical to success — see above. But a
+      // GENUINE failure (Resend outage, bad API key) must leave a server
+      // trace, or it surfaces only as "no email arrived". Log the error
+      // class/type ONLY — never the message or the email address, either of
+      // which could leak the identifier into logs (advisor condition).
+      // AccessDenied is the policy rejection and stays silent by design.
+      const isAccessDenied =
+        error instanceof Error &&
+        (error as { type?: unknown }).type === "AccessDenied";
+      if (!isAccessDenied) {
+        const errorName = error instanceof Error ? error.name : typeof error;
+        console.error(`requestSignIn failed: ${errorName}`);
+      }
     }
   }
   return { sent: true };
