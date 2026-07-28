@@ -74,6 +74,11 @@ export async function createUserWithEvent(
 export async function changeUserRole(
   db: PrismaClient,
   input: { subjectId: string; toRole: Role; actorId: string },
+  // Test-only scheduling seam: the concurrency test (design matrix item 4)
+  // parks one transaction here — after the guard read, before the write — so
+  // the second transaction provably overlaps it. Production callers must
+  // never pass this.
+  testHooks?: { afterGuard?: () => Promise<void> },
 ): Promise<User> {
   return db.$transaction(async (tx) => {
     const activeAdminIds = await lockActiveAdmins(tx);
@@ -97,6 +102,7 @@ export async function changeUserRole(
     ) {
       throw new LastAdminError();
     }
+    await testHooks?.afterGuard?.();
     const updated = await tx.user.update({
       where: { id: input.subjectId },
       data: { role: input.toRole },

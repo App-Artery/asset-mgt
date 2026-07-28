@@ -19,5 +19,10 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: ["./vitest.setup.ts"],
+    // Integration tests share one real test database, and the last-admin
+    // guard counts active admins across the whole User table — files that
+    // create ADMIN_IT rows while another file stages a "last admin" scenario
+    // would race. Run test files sequentially; the suite is small.
+    fileParallelism: false,
   },
 });
