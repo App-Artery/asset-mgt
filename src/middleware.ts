@@ -14,5 +14,7 @@ import { authConfig } from "@/auth.config";
 export default NextAuth(authConfig).auth;
 
 export const config = {
-  matcher: ["/((?!api/auth|_next/static|_next/image|favicon\\.ico).*)"],
+  // /signin is the ONLY public page (uniform magic-link flow, AM-01);
+  // everything else stays behind the deny-by-default session gate.
+  matcher: ["/((?!api/auth|signin|_next/static|_next/image|favicon\\.ico).*)"],
 };
