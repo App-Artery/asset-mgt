@@ -1,0 +1,56 @@
+# Nightly logical backup of the production database (advisor condition,
+# docs/DESIGN.md): Neon free tier's restore window is short, and once Asset
+# Tiger is cancelled this register is the only copy of the data.
+#
+# REQUIRED before AM-04 cutover sign-off: the DATABASE_URL repo secret must be
+# configured (Neon connection string) and a green run of this workflow with a
+# non-empty dump artifact verified. Until the secret exists, runs no-op with a
+# warning. Scheduled workflows only run from the default branch.
+name: Nightly DB backup
+
+on:
+  schedule:
+    - cron: "15 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    name: backup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check DATABASE_URL secret
+        id: guard
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::warning::DATABASE_URL secret not configured — backup skipped. Configuring it and verifying a green run is REQUIRED before AM-04 cutover sign-off."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: pg_dump
+        if: steps.guard.outputs.configured == 'true'
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        # postgres:17 image so the client major matches the server (pg_dump
+        # refuses servers newer than itself). Keep in sync with ci.yml.
+        run: |
+          docker run --rm -e DATABASE_URL postgres:17 \
+            sh -c 'pg_dump --format=custom --no-owner --dbname="$DATABASE_URL"' \
+            > asset-mgt.dump
+          test -s asset-mgt.dump
+          ls -la asset-mgt.dump
+
+      - name: Upload dump artifact
+        if: steps.guard.outputs.configured == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pg-dump-${{ github.run_id }}
+          path: asset-mgt.dump
+          retention-days: 30
+          if-no-files-found: error

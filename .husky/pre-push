@@ -1,0 +1,3 @@
+# Full-repo gate — lint-staged only covers changed files (scope-gap rule,
+# LEARNINGS §Tooling); the full sweep must run before anything leaves the machine.
+pnpm lint && pnpm typecheck

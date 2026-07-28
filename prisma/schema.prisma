@@ -1,0 +1,199 @@
+// Prisma schema — asset-mgt
+//
+// Data shape per docs/intake/asset-mgt/SOLUTION.md. Two rules are load-bearing:
+// - Person stores employeeRef (employee number), NEVER a national ID (brief §7.3).
+// - AssetEvent is an append-only audit trail: no update/delete path may ever be
+//   written against it; corrections are new events.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN_IT
+  PROCUREMENT
+  FINANCE
+  STAFF_RO
+}
+
+// Lifecycle: ON_ORDER → IN_STOCK (tag assigned at delivery) ↔ ASSIGNED;
+// {IN_STOCK, ASSIGNED} → IN_REPAIR → IN_STOCK; any → RETIRED.
+// Transition validation is application logic (AM-02); the enum is the vocabulary.
+enum AssetStatus {
+  ON_ORDER
+  IN_STOCK
+  ASSIGNED
+  IN_REPAIR
+  RETIRED
+}
+
+enum AssetCondition {
+  NEW
+  GOOD
+  FAIR
+  POOR
+  DEFECTIVE
+}
+
+enum AssetEventType {
+  CREATED
+  UPDATED
+  STATUS_CHANGED
+  ASSIGNED
+  RETURNED
+  IMPORTED
+  CORRECTION
+}
+
+model Asset {
+  id            String          @id @default(cuid())
+  // Client's own numeric tag scheme: unique at the DB level, nullable until delivery.
+  tag           String?         @unique
+  categoryId    String
+  category      Category        @relation(fields: [categoryId], references: [id])
+  make          String
+  model         String
+  serial        String?
+  purchasedAt   DateTime?
+  purchasePrice Decimal?        @db.Decimal(12, 2)
+  supplier      String?
+  warrantyUntil DateTime?
+  status        AssetStatus     @default(ON_ORDER)
+  condition     AssetCondition?
+  siteId        String?
+  site          Site?           @relation(fields: [siteId], references: [id])
+  assignments   Assignment[]
+  events        AssetEvent[]
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+}
+
+model Person {
+  id          String       @id @default(cuid())
+  name        String
+  email       String       @unique
+  // Employee number — never a national ID (brief §7.3).
+  employeeRef String?      @unique
+  assignments Assignment[]
+  user        User?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+model Assignment {
+  id             String    @id @default(cuid())
+  assetId        String
+  asset          Asset     @relation(fields: [assetId], references: [id])
+  personId       String
+  person         Person    @relation(fields: [personId], references: [id])
+  checkedOutAt   DateTime  @default(now())
+  returnedAt     DateTime?
+  conditionNotes String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([assetId])
+  @@index([personId])
+}
+
+// Append-only audit trail. Rows are only ever inserted and read — never updated
+// or deleted. Corrections are new CORRECTION events referencing the same asset.
+model AssetEvent {
+  id         String         @id @default(cuid())
+  assetId    String
+  asset      Asset          @relation(fields: [assetId], references: [id])
+  type       AssetEventType
+  fromStatus AssetStatus?
+  toStatus   AssetStatus?
+  actorId    String?
+  actor      User?          @relation(fields: [actorId], references: [id])
+  notes      String?
+  at         DateTime       @default(now())
+
+  @@index([assetId, at])
+}
+
+model Category {
+  id     String  @id @default(cuid())
+  name   String  @unique
+  assets Asset[]
+}
+
+model Site {
+  id     String  @id @default(cuid())
+  name   String  @unique
+  assets Asset[]
+}
+
+model ImportBatch {
+  id         String   @id @default(cuid())
+  source     String
+  runAt      DateTime @default(now())
+  dryRun     Boolean
+  rowsOk     Int
+  rowsFailed Int
+  report     Json
+}
+
+// ---------------------------------------------------------------------------
+// Auth.js (v5) models — standard @auth/prisma-adapter shape plus role/personId.
+// Sessions are JWT (no Session rows at runtime); the table exists so the
+// adapter surface stays complete if the strategy ever changes deliberately.
+// Role is read from this table inside every mutating action (requireRole) —
+// never trusted from the JWT.
+// ---------------------------------------------------------------------------
+
+model User {
+  id            String       @id @default(cuid())
+  name          String?
+  email         String       @unique
+  emailVerified DateTime?
+  image         String?
+  role          Role         @default(STAFF_RO)
+  personId      String?      @unique
+  person        Person?      @relation(fields: [personId], references: [id])
+  accounts     Account[]
+  sessions     Session[]
+  assetEvents  AssetEvent[]
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
