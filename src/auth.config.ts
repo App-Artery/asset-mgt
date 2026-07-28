@@ -10,7 +10,18 @@ import type { NextAuthConfig } from "next-auth";
  */
 export const authConfig = {
   providers: [],
-  session: { strategy: "jwt" },
+  // 14 days: the JWT carries identity only (roles/active-status are DB-read
+  // per request), but a stolen field phone still shouldn't hold a month of
+  // access (AM-01 design).
+  session: { strategy: "jwt", maxAge: 14 * 24 * 3600 },
+  // All auth UX lands on /signin — the default Auth.js pages are an
+  // enumeration oracle (unknown email → visible AccessDenied) and are not
+  // used. Error/verify states map to the same uniform page.
+  pages: {
+    signIn: "/signin",
+    verifyRequest: "/signin?sent=1",
+    error: "/signin",
+  },
   callbacks: {
     authorized({ auth }) {
       // Deny-by-default: any matched route requires a session. Authorisation
