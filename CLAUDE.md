@@ -22,8 +22,18 @@ ADR: `docs/adr/ADR-001-vercel-neon-stack.md` · Stories: `docs/intake/asset-mgt/
   matcher) only authenticates; roles are always read from the DB, never from
   the JWT. Sessions are JWT. No open signup — users are provisioned, never
   self-registered.
-- **`AssetEvent` is append-only.** Never write an update or delete against it,
-  in code or SQL. Corrections are new events.
+- **`AssetEvent` and `UserEvent` are append-only.** Never write an update or
+  delete against either, in code or SQL. Corrections are new events, and the
+  audit insert happens in the same transaction as the mutation it records
+  (`src/lib/user-admin.ts`). User deactivation is a flag (`deactivatedAt`),
+  never a delete.
+- **Emails are lowercased at every write and lookup** (sign-in policy, admin
+  actions, seed). A case mismatch silently locks staff out.
+- **Sign-in throttle lives in `src/lib/sign-in-policy.ts`**, counting
+  `VerificationToken.createdAt` rows (3/email/15 min, 30 global/hour), called
+  from the `signIn` callback in `src/auth.ts`. Every sign-in rejection is an
+  indistinguishable `false` — /signin renders one uniform message for all
+  outcomes; never add distinct error surfaces to that flow.
 - **`Person.employeeRef`, never a national ID** — no national-ID column may be
   added anywhere (brief §7.3, Kenya DPA note in `docs/DPA-TRANSFER-NOTE.md`).
 - **Real-DB tests:** integration tests run against real Postgres via
