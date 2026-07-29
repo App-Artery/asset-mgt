@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  assertSeedPostCondition,
   parseReferenceCsv,
   seedReference,
   type ReferenceRow,
@@ -14,11 +15,20 @@ import {
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 
-// Proving the zero-category post-condition needs a Category table that can
-// actually reach zero, and in the shared test schema it cannot: assets pin
-// their category, and AssetEvent may never be deleted to clear them
-// (CLAUDE.md, append-only). So this file migrates its own Postgres schema
-// inside the test database and owns every row in it.
+// This file migrates its own Postgres schema inside the test database and owns
+// every row in it. Two reasons:
+//
+// 1. The asset-core workstream is writing to public.Category/Site/Asset in the
+//    same database concurrently. Nothing here may disturb those rows, so
+//    nothing here touches that schema — verified by counting public.Category,
+//    Site and Asset either side of a full run of this file: 62/18/132 before
+//    and after, including the deleteMany below.
+// 2. Proving the post-condition end-to-end needs a Category table that can
+//    actually reach zero, and public cannot: assets pin their category, and
+//    AssetEvent may never be deleted to clear them (CLAUDE.md, append-only).
+//
+// Every row in this schema was created by this file, so the deleteMany in the
+// last test is scoped to rows we created — by construction, not by filter.
 const SCHEMA = "seed_reference_test";
 const schemaUrl = testDatabaseUrl
   ? `${testDatabaseUrl}${testDatabaseUrl.includes("?") ? "&" : "?"}schema=${SCHEMA}`
@@ -60,6 +70,20 @@ describe("parseReferenceCsv", () => {
       /header/,
     );
     expect(() => parseReferenceCsv("type,name\ncategory,\n")).toThrow(/row 2/);
+  });
+});
+
+// The guard itself, testable without arranging an empty table anywhere.
+describe("assertSeedPostCondition", () => {
+  it("throws when the run would leave the database with no categories", () => {
+    expect(() => assertSeedPostCondition(0)).toThrow(/zero categories/);
+  });
+
+  it("passes as soon as one category exists, however few this run added", () => {
+    // A re-run against an already-seeded database inserts nothing and must
+    // still succeed — the invariant is the table's state, not this run's yield.
+    expect(() => assertSeedPostCondition(1)).not.toThrow();
+    expect(() => assertSeedPostCondition(17)).not.toThrow();
   });
 });
 
@@ -132,10 +156,14 @@ describe.skipIf(!testDatabaseUrl)("seedReference (real DB)", () => {
     });
   });
 
-  it("exits non-zero when a run leaves zero categories", async () => {
-    // Last in the file: it empties the Category table this schema owns. An
-    // asset cannot be created without a category, so a site-only seed that
-    // reported success would hand over an unusable register.
+  it("wires the real category count into the post-condition", async () => {
+    // The unit test above proves the guard rejects zero; this proves
+    // seedReference actually calls it with the live table count. Without
+    // this, deleting the assertSeedPostCondition call from seedReference
+    // would leave the unit test green — a guard nothing invokes.
+    //
+    // Last in the file: it empties the Category table THIS SCHEMA owns (every
+    // row in it was created above). public.Category is untouched.
     await db.category.deleteMany();
 
     await expect(

@@ -98,6 +98,24 @@ export function parseReferenceCsv(text: string): ReferenceRow[] {
   return rows;
 }
 
+/**
+ * The seed's post-condition. Pure and exported so the guard is testable
+ * directly, without having to arrange an empty Category table.
+ *
+ * Deliberately a function of the WHOLE table, not of this run's insert count:
+ * re-running against a database that already holds categories legitimately
+ * gains nothing, and must stay a success. Zero categories is the failure —
+ * Asset.categoryId is required, so the register cannot record anything.
+ */
+export function assertSeedPostCondition(categoryCount: number): void {
+  if (categoryCount === 0) {
+    throw new Error(
+      "Reference seed finished with zero categories — an asset cannot be " +
+        "created without one. Check the CSV has at least one `category` row.",
+    );
+  }
+}
+
 export async function seedReference(
   db: ReferenceDb,
   rows: ReferenceRow[],
@@ -120,16 +138,7 @@ export async function seedReference(
     skipDuplicates: true,
   });
 
-  // Post-condition, checked against the whole table rather than this run:
-  // an asset cannot be created without a category, so finishing with none is
-  // a failed bootstrap however many rows the CSV had.
-  const categoryCount = await db.category.count();
-  if (categoryCount === 0) {
-    throw new Error(
-      "Reference seed finished with zero categories — an asset cannot be " +
-        "created without one. Check the CSV has at least one `category` row.",
-    );
-  }
+  assertSeedPostCondition(await db.category.count());
 
   return {
     category: {
