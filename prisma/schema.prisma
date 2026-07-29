@@ -78,6 +78,15 @@ model Asset {
   events        AssetEvent[]
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
+
+  // The register list filters on these three (AM-02); AM-07's search adds its
+  // own. A CHECK constraint the schema language cannot express lives in the
+  // am02_asset_lifecycle migration: a tag is mandatory for every status except
+  // ON_ORDER (not yet delivered) and RETIRED (may never have been tagged —
+  // dead-on-arrival kit returned to the supplier).
+  @@index([status])
+  @@index([categoryId])
+  @@index([siteId])
 }
 
 model Person {
@@ -118,7 +127,11 @@ model AssetEvent {
   fromStatus AssetStatus?
   toStatus   AssetStatus?
   actorId    String?
-  actor      User?          @relation(fields: [actorId], references: [id])
+  // Restrict, not SetNull: deleting a User must never silently blank audit
+  // attribution (users are deactivated, never deleted). Matches UserEvent —
+  // the advisor attached this as an AM-01 condition to apply the moment the
+  // asset write path opened, which is this story.
+  actor      User?          @relation(fields: [actorId], references: [id], onDelete: Restrict)
   notes      String?
   at         DateTime       @default(now())
 

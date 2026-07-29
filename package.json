@@ -20,6 +20,7 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:seed": "dotenv -- tsx scripts/seed-staff.ts",
+    "db:seed:reference": "dotenv -- tsx scripts/seed-reference.ts",
     "postinstall": "prisma generate",
     "prepare": "husky"
   },

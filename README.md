@@ -17,6 +17,7 @@ cp .env.example .env         # fill in real values; never commit .env
 docker compose up -d         # Postgres 17 (+ asset_mgt_test database)
 pnpm db:migrate              # apply migrations to the dev database
 SEED_ADMIN_EMAIL=you@example.com STAFF_CSV=scripts/staff.example.csv pnpm db:seed
+pnpm db:seed:reference       # categories + sites — an asset needs a category
 pnpm dev                     # http://localhost:3000
 ```
 
@@ -32,6 +33,15 @@ refuses to run without `SEED_ADMIN_EMAIL`, creates-or-promotes that user to
 staff CSV is personal data: keep it in `seed-data/` (gitignored) — only the
 synthetic `scripts/staff.example.csv` may be committed.
 
+`pnpm db:seed:reference` loads the same way and seeds the asset categories and
+sites. It reads `type,name` rows from `REFERENCE_CSV`, defaulting to the
+generic `scripts/reference.example.csv`; real client site names belong in
+`seed-data/`, not the repo. It is idempotent (re-running duplicates and renames
+nothing), fails on an unknown `type` naming the offending row rather than
+skipping it, and exits non-zero if the run would finish with zero categories —
+an asset cannot be created without one. Admins can add and rename categories
+and sites afterwards at `/admin/reference` without a deploy.
+
 ### Scripts
 
 | Command                                                   | What it does                                                                                         |
@@ -41,6 +51,7 @@ synthetic `scripts/staff.example.csv` may be committed.
 | `pnpm test`                                               | Vitest. Real-DB integration tests run only when `TEST_DATABASE_URL` is set — with it unset they skip |
 | `pnpm db:migrate` / `pnpm db:deploy` / `pnpm db:generate` | Prisma migrate dev / deploy / generate                                                               |
 | `pnpm db:seed`                                            | Seed staff + first admin (needs `SEED_ADMIN_EMAIL`; optional `STAFF_CSV`)                            |
+| `pnpm db:seed:reference`                                  | Seed asset categories + sites (optional `REFERENCE_CSV`); fails if it would leave zero categories    |
 | `pnpm format`                                             | Prettier over the repo                                                                               |
 
 Husky runs lint-staged on commit and full-repo lint + typecheck on push. CI
@@ -77,11 +88,16 @@ record — keep all three current when anything here changes.
 6. **Deploy and seed** — push to `main`. Then provision users against Neon:
    `DATABASE_URL=<neon-pooled-url> SEED_ADMIN_EMAIL=<org-admin-mailbox> STAFF_CSV=seed-data/staff.csv pnpm db:seed`
    (the admin mailbox must be an org mailbox with MFA — client obligation,
-   AM-01 design). Sign in at `/signin` with the admin email via magic link
+   AM-01 design), then the reference data the register needs:
+   `DATABASE_URL=<neon-pooled-url> REFERENCE_CSV=seed-data/reference.csv pnpm db:seed:reference`
+   (omit `REFERENCE_CSV` to seed the generic defaults; the run exits non-zero
+   rather than leaving zero categories, since an asset cannot be created
+   without one). Sign in at `/signin` with the admin email via magic link
    (needs the verified Resend domain from step 3), then verify `/health`
    returns JSON while authenticated and confirm `/admin/users` lists the
-   seeded staff. Unauthenticated requests redirect to `/signin` — that is
-   the deny-by-default gate working.
+   seeded staff and `/admin/reference` lists the categories.
+   Unauthenticated requests redirect to `/signin` — that is the
+   deny-by-default gate working.
 7. **Nightly backups — REQUIRED before AM-04 cutover sign-off** (advisor
    condition): set the `DATABASE_URL` repo secret in GitHub
    (Settings → Secrets → Actions) to the Neon connection string, then run the

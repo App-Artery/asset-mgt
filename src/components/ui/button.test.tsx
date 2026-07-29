@@ -20,13 +20,17 @@ describe("Button", () => {
   });
 
   it("renders as the child element with asChild", () => {
+    // A plain <a> with an off-app href: this asserts Slot's passthrough, so it
+    // deliberately avoids next/link (router context in jsdom) and avoids
+    // pointing at a real page route, which @next/next/no-html-link-for-pages
+    // rightly rejects in app code.
     render(
       <Button asChild>
-        <a href="/assets">Open register</a>
+        <a href="https://example.com/register">Open register</a>
       </Button>,
     );
 
     const link = screen.getByRole("link", { name: "Open register" });
-    expect(link).toHaveAttribute("href", "/assets");
+    expect(link).toHaveAttribute("href", "https://example.com/register");
   });
 });

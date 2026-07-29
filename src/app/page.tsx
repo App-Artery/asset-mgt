@@ -31,6 +31,11 @@ export default async function HomePage() {
         <span className="font-medium">{user.name ?? user.email}</span>{" "}
         <span className="text-muted-foreground">({user.role})</span>
       </p>
+      {/* Every role reads the register — staff read-only, IT and procurement
+          write. The page's own requireRole is what enforces that. */}
+      <Link href="/assets" className="text-sm underline underline-offset-4">
+        Asset register
+      </Link>
       {isActiveAdmin ? (
         <Link
           href="/admin/users"
