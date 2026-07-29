@@ -122,12 +122,24 @@ describe.skipIf(!testDatabaseUrl)("asset actions (real DB)", () => {
   async function createAssetExpectingRedirect(
     fields: Record<string, string>,
   ): Promise<string> {
+    // The no-redirect case is captured, not thrown from inside the try — a
+    // throw there lands in this function's own catch, which swallows the
+    // diagnostic and reports "expected undefined to match /^NEXT_REDIRECT/"
+    // instead of the message written to explain the failure.
+    let returnedState: unknown;
+    let thrown: unknown;
     try {
-      const state = await createAsset(null, formData(fields));
-      throw new Error(
-        `Expected createAsset to redirect, got ${JSON.stringify(state)}`,
-      );
+      returnedState = await createAsset(null, formData(fields));
     } catch (error) {
+      thrown = error;
+    }
+    if (thrown === undefined) {
+      throw new Error(
+        `Expected createAsset to redirect, got ${JSON.stringify(returnedState)}`,
+      );
+    }
+    {
+      const error = thrown;
       const digest = (error as { digest?: string }).digest;
       expect(digest).toMatch(/^NEXT_REDIRECT/);
       const target = digest?.match(/\/assets\/([^;]+)/);
