@@ -401,23 +401,37 @@ describe.skipIf(!testDatabaseUrl)("asset-admin transactions (real DB)", () => {
     });
   });
 
-  it("rejects a tagless tracked status at the DB layer, bypassing the app entirely", async () => {
-    const asset = await createAssetWithEvent(db, assetInput());
+  // Raw SQL: no lifecycle module, no Prisma model layer, no application guard
+  // in the path. If any of these succeeds, Asset_tag_required_when_tracked is
+  // not doing the work and normaliseTag — application code — is the only thing
+  // standing between the register and an untracked, untagged asset.
+  //
+  // All three blank forms, not just NULL. `'' IS NOT NULL` is true, so the
+  // original `tag IS NOT NULL` form accepted '' and '   ' at the DB layer while
+  // a NULL-only test read as proof of the whole invariant. That gap is also the
+  // AM-04 trap: '' occupies the unique index, so the second blank-tagged import
+  // row fails P2002 and reports "an asset with that tag already exists" for two
+  // rows that both have no tag.
+  describe.each([
+    ["NULL", null],
+    ["an empty string", ""],
+    ["a whitespace-only string", "   "],
+  ])("the CHECK constraint, bypassing the app entirely", (label, tagValue) => {
+    it(`rejects a tracked status with ${label} as the tag`, async () => {
+      const asset = await createAssetWithEvent(db, assetInput());
 
-    // Raw SQL: no lifecycle module, no Prisma model layer, no application
-    // guard in the path. If this succeeds, Asset_tag_required_when_tracked is
-    // not doing the work and the app guard is the only thing standing between
-    // the register and an untracked, untagged asset.
-    await expect(
-      db.$executeRawUnsafe(
-        `UPDATE "Asset" SET "status" = 'IN_STOCK' WHERE "id" = $1`,
-        asset.id,
-      ),
-    ).rejects.toThrow(/Asset_tag_required_when_tracked/);
+      await expect(
+        db.$executeRawUnsafe(
+          `UPDATE "Asset" SET "status" = 'IN_STOCK', "tag" = $2 WHERE "id" = $1`,
+          asset.id,
+          tagValue,
+        ),
+      ).rejects.toThrow(/Asset_tag_required_when_tracked/);
 
-    await expect(
-      db.asset.findUniqueOrThrow({ where: { id: asset.id } }),
-    ).resolves.toMatchObject({ status: AssetStatus.ON_ORDER, tag: null });
+      await expect(
+        db.asset.findUniqueOrThrow({ where: { id: asset.id } }),
+      ).resolves.toMatchObject({ status: AssetStatus.ON_ORDER, tag: null });
+    });
   });
 
   describe("updateAssetWithEvent", () => {

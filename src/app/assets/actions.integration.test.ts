@@ -110,15 +110,36 @@ describe.skipIf(!testDatabaseUrl)("asset actions (real DB)", () => {
     };
   }
 
+  /**
+   * Drives createAsset and returns the id of the asset it created.
+   *
+   * A successful create redirects to the new asset's detail page, so it throws
+   * NEXT_REDIRECT rather than returning a state. Reading the id back out of the
+   * redirect target is also the assertion that the redirect goes where the
+   * operator needs it to (nit N4) — landing anywhere else, or not redirecting
+   * at all, fails here.
+   */
+  async function createAssetExpectingRedirect(
+    fields: Record<string, string>,
+  ): Promise<string> {
+    try {
+      const state = await createAsset(null, formData(fields));
+      throw new Error(
+        `Expected createAsset to redirect, got ${JSON.stringify(state)}`,
+      );
+    } catch (error) {
+      const digest = (error as { digest?: string }).digest;
+      expect(digest).toMatch(/^NEXT_REDIRECT/);
+      const target = digest?.match(/\/assets\/([^;]+)/);
+      expect(target).not.toBeNull();
+      return target![1];
+    }
+  }
+
   /** An ON_ORDER asset owned by the currently signed-in actor's session. */
   async function anOrderedAsset() {
-    const result = await createAsset(null, formData(createFields()));
-    expect(result?.ok).toBe(true);
-    const asset = await db.asset.findFirstOrThrow({
-      orderBy: { createdAt: "desc" },
-      where: { categoryId, status: AssetStatus.ON_ORDER, tag: null },
-    });
-    return asset;
+    const id = await createAssetExpectingRedirect(createFields());
+    return db.asset.findUniqueOrThrow({ where: { id } });
   }
 
   const mutatingActions = [
@@ -146,16 +167,15 @@ describe.skipIf(!testDatabaseUrl)("asset actions (real DB)", () => {
       const actor = await signInAs(role);
       const tag = uniqueTag();
 
-      const result = await createAsset(
-        null,
-        formData(createFields({ tag, status: AssetStatus.IN_STOCK })),
+      const id = await createAssetExpectingRedirect(
+        createFields({ tag, status: AssetStatus.IN_STOCK }),
       );
 
-      expect(result).toMatchObject({ ok: true });
       const asset = await db.asset.findUniqueOrThrow({
-        where: { tag },
+        where: { id },
         include: { events: true },
       });
+      expect(asset.tag).toBe(tag);
       expect(asset.status).toBe(AssetStatus.IN_STOCK);
       expect(asset.events).toHaveLength(1);
       expect(asset.events[0]).toMatchObject({
@@ -170,20 +190,16 @@ describe.skipIf(!testDatabaseUrl)("asset actions (real DB)", () => {
     await signInAs(Role.PROCUREMENT);
     const tag = uniqueTag();
 
-    const result = await createAsset(
-      null,
-      formData(
-        createFields({
-          tag,
-          status: AssetStatus.IN_STOCK,
-          // 0 is a real price for donated kit — .positive() would reject it.
-          purchasePrice: "0",
-          purchasedAt: "2026-03-15",
-        }),
-      ),
+    await createAssetExpectingRedirect(
+      createFields({
+        tag,
+        status: AssetStatus.IN_STOCK,
+        // 0 is a real price for donated kit — .positive() would reject it.
+        purchasePrice: "0",
+        purchasedAt: "2026-03-15",
+      }),
     );
 
-    expect(result).toMatchObject({ ok: true });
     const asset = await db.asset.findUniqueOrThrow({ where: { tag } });
     expect(asset.purchasePrice?.toString()).toBe("0");
     expect(asset.purchasedAt?.toISOString()).toBe("2026-03-15T00:00:00.000Z");
@@ -194,9 +210,9 @@ describe.skipIf(!testDatabaseUrl)("asset actions (real DB)", () => {
     const tag = uniqueTag();
     const fields = createFields({ tag, status: AssetStatus.IN_STOCK });
 
-    await expect(createAsset(null, formData(fields))).resolves.toMatchObject({
-      ok: true,
-    });
+    await createAssetExpectingRedirect(fields);
+    // The duplicate returns a form state rather than redirecting — only a
+    // successful create navigates away.
     await expect(createAsset(null, formData(fields))).resolves.toMatchObject({
       ok: false,
       message: "An asset with that tag already exists.",
@@ -228,6 +244,28 @@ describe.skipIf(!testDatabaseUrl)("asset actions (real DB)", () => {
     await expect(
       db.asset.findUniqueOrThrow({ where: { id: asset.id } }),
     ).resolves.toMatchObject({ status: AssetStatus.IN_STOCK, tag });
+  });
+
+  it("blames the tag only when the tag is what failed", async () => {
+    await signInAs(Role.PROCUREMENT);
+    const asset = await anOrderedAsset();
+
+    // Missing assetId is not a tagging problem: reporting it as one sends the
+    // operator hunting for a tag that was never the issue (nit N5).
+    await expect(
+      receiveAndTagAsset(null, formData({ assetId: "", tag: uniqueTag() })),
+    ).resolves.toMatchObject({
+      ok: false,
+      message: expect.stringContaining("Check the form"),
+    });
+
+    // A blank tag still earns the tag message.
+    await expect(
+      receiveAndTagAsset(null, formData({ assetId: asset.id, tag: "   " })),
+    ).resolves.toMatchObject({
+      ok: false,
+      message: "A tag is required before this asset can move into stock.",
+    });
   });
 
   it("reports an illegal transition as a form error, not a crash", async () => {

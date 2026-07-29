@@ -104,6 +104,19 @@ describe.skipIf(!testDatabaseUrl)("seedReference (real DB)", () => {
       stdio: "inherit",
     });
     db = new PrismaClient({ datasourceUrl: schemaUrl });
+
+    // Self-verify the isolation rather than trusting the ?schema= in schemaUrl.
+    // The last test in this file calls category.deleteMany(), which is the most
+    // destructive line in the branch: pointed at `public` it would delete the
+    // asset workstream's fixtures, and against a real database it would delete
+    // the client's categories. The safety rests entirely on this connection
+    // resolving to the private schema, so assert it instead of assuming it — a
+    // future edit to schemaUrl that silently drops the parameter fails here,
+    // loudly, instead of succeeding destructively.
+    const [{ current_schema: resolved }] = await db.$queryRawUnsafe<
+      { current_schema: string }[]
+    >("SELECT current_schema()");
+    expect(resolved).toBe(SCHEMA);
   });
 
   afterAll(async () => {

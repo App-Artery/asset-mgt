@@ -164,8 +164,23 @@ export async function updateAssetWithEvent(
     }
     // Editing cannot strip the tag off an asset whose status requires one.
     // The CHECK constraint is the real enforcement; this is the friendly
-    // message. Reading status without a lock is fine here: a concurrent
-    // transition can only race us into the constraint, never past it.
+    // message.
+    //
+    // This read is deliberately unlocked, and that is safe for the TAG-NULL
+    // INVARIANT ONLY: a concurrent transition can race us into the constraint
+    // but never past it, because the constraint re-checks the committed row.
+    // It is NOT a general safety claim about this function. Two races remain
+    // open, both last-write-wins, neither backstopped by any constraint:
+    //   - a concurrent repair setting `condition` can be clobbered by an edit
+    //     carrying the stale value, and since the UPDATED event records field
+    //     NAMES and not values, the overwritten value is unreconstructable
+    //     from the history;
+    //   - an edit can land tag T1 on a row a concurrent delivery just tagged
+    //     T2.
+    // Accepted for AM-02: no AC requires optimistic concurrency and the plan
+    // scoped this as a simple edit path. AM-03 builds assignment writes on
+    // this file's pattern and has NO equivalent CHECK backstop, so it must
+    // decide locking on its own merits rather than inheriting this comment.
     if (tagRequiredFor(current.status) && tag === null) {
       throw new TagRequiredError(current.status);
     }

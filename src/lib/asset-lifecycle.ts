@@ -27,6 +27,19 @@ export const ASSET_TRANSITIONS: Readonly<
   RETIRED: [],
 };
 
+/**
+ * Human-readable status names. Lives here, beside the transition map, so the
+ * register and the detail page cannot drift into showing the same status two
+ * different ways. Client-safe: this module's only import is a type.
+ */
+export const STATUS_LABELS: Readonly<Record<AssetStatus, string>> = {
+  ON_ORDER: "On order",
+  IN_STOCK: "In stock",
+  ASSIGNED: "Assigned",
+  IN_REPAIR: "In repair",
+  RETIRED: "Retired",
+};
+
 /** Statuses that do not require a tag — mirrors the exemptions in the DB CHECK. */
 const TAG_EXEMPT_STATUSES: readonly AssetStatus[] = ["ON_ORDER", "RETIRED"];
 

@@ -1,16 +1,20 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { AssetCondition, AssetStatus, Prisma } from "@prisma/client";
+import { redirect } from "next/navigation";
+import { AssetCondition, AssetStatus } from "@prisma/client";
 import { z } from "zod";
 import {
   INITIAL_ASSET_STATUSES,
-  TagRequiredError,
   createAssetWithEvent,
   transitionAssetStatus,
   updateAssetWithEvent,
 } from "@/lib/asset-admin";
-import { IllegalTransitionError } from "@/lib/asset-lifecycle";
+import {
+  INVALID_FIELDS_MESSAGE,
+  TAG_REQUIRED_MESSAGE,
+  mapAssetError,
+} from "@/lib/asset-errors";
 import { requireRole } from "@/lib/authz";
 import { getDb } from "@/lib/db";
 
@@ -115,56 +119,6 @@ function assetFieldsFrom(formData: FormData) {
   };
 }
 
-const INVALID_FIELDS_MESSAGE =
-  "Check the form: category, make and model are required, and any price must be zero or more.";
-
-// ---------------------------------------------------------------------------
-// Error mapping. Anything unmapped rethrows — AuthorizationError in particular
-// must fail loudly and never be swallowed into a form message.
-// ---------------------------------------------------------------------------
-
-const DUPLICATE_TAG_MESSAGE = "An asset with that tag already exists.";
-const TAG_REQUIRED_MESSAGE =
-  "A tag is required before this asset can move into stock.";
-
-/**
- * Postgres SQLSTATE 23514 (check_violation) — i.e.
- * Asset_tag_required_when_tracked. Defence in depth behind the TagRequiredError
- * guard, which should mean this never fires. Prisma surfaces a model-layer
- * CHECK violation as PrismaClientUnknownRequestError with no `code` field and
- * the SQLSTATE only in the message text (verified against Postgres 17), so the
- * message is the only thing to match on.
- */
-function isCheckViolation(error: unknown): boolean {
-  if (
-    !(error instanceof Prisma.PrismaClientKnownRequestError) &&
-    !(error instanceof Prisma.PrismaClientUnknownRequestError)
-  ) {
-    return false;
-  }
-  return error.message.includes("23514");
-}
-
-function mapAssetError(error: unknown): AssetActionState {
-  if (
-    error instanceof Prisma.PrismaClientKnownRequestError &&
-    error.code === "P2002"
-  ) {
-    return { ok: false, message: DUPLICATE_TAG_MESSAGE };
-  }
-  if (error instanceof IllegalTransitionError) {
-    return {
-      ok: false,
-      message:
-        "That status change isn't allowed from this asset's current status.",
-    };
-  }
-  if (error instanceof TagRequiredError || isCheckViolation(error)) {
-    return { ok: false, message: TAG_REQUIRED_MESSAGE };
-  }
-  return null;
-}
-
 function revalidateAsset(assetId: string): void {
   revalidatePath("/assets");
   revalidatePath(`/assets/${assetId}`);
@@ -200,10 +154,13 @@ export async function createAsset(
     return failure;
   }
   revalidateAsset(assetId);
-  return {
-    ok: true,
-    message: `Added ${parsed.data.make} ${parsed.data.model}.`,
-  };
+  // Redirect rather than returning a success state. Staying on a populated
+  // /assets/new means a second click creates a byte-identical row, and for an
+  // untagged ON_ORDER asset there is nothing to tell the two apart — with no
+  // delete path, the only remedy is retiring one permanently. Redirect throws
+  // NEXT_REDIRECT, which is not an application error: it must escape the
+  // try/catch above, so it sits outside it deliberately.
+  redirect(`/assets/${assetId}`);
 }
 
 export async function updateAsset(
@@ -242,7 +199,16 @@ export async function receiveAndTagAsset(
     notes: formData.get("notes"),
   });
   if (!parsed.success) {
-    return { ok: false, message: TAG_REQUIRED_MESSAGE };
+    // Only a bad/missing tag earns the tag message. A malformed assetId is not
+    // a tagging problem, and reporting it as one sends the operator hunting for
+    // a tag that was never the issue.
+    const tagAtFault = parsed.error.issues.some(
+      (issue) => issue.path[0] === "tag",
+    );
+    return {
+      ok: false,
+      message: tagAtFault ? TAG_REQUIRED_MESSAGE : INVALID_FIELDS_MESSAGE,
+    };
   }
   return runTransition(parsed.data.assetId, AssetStatus.IN_STOCK, actorId, {
     tag: parsed.data.tag,

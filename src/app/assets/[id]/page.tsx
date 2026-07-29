@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { AssetStatus } from "@prisma/client";
-import { ASSET_TRANSITIONS } from "@/lib/asset-lifecycle";
+import { ASSET_TRANSITIONS, STATUS_LABELS } from "@/lib/asset-lifecycle";
 import { requireRole } from "@/lib/authz";
 import { getDb } from "@/lib/db";
 import {
@@ -41,6 +41,11 @@ function lifecycleMovesFor(status: AssetStatus): LifecycleMove[] {
 /** <input type="date"> wants YYYY-MM-DD; dates are written at UTC midnight. */
 function toDateInput(value: Date | null): string {
   return value ? value.toISOString().slice(0, 10) : "";
+}
+
+/** A CREATED event has no fromStatus; an UPDATED event has neither. */
+function statusLabel(status: AssetStatus | null): string {
+  return status ? STATUS_LABELS[status] : "—";
 }
 
 /** Deterministic and timezone-explicit — the server's locale is not the reader's. */
@@ -107,7 +112,7 @@ export default async function AssetDetailPage({
       </div>
 
       <dl className="grid grid-cols-2 gap-x-8 gap-y-3 text-sm sm:grid-cols-3">
-        <Field label="Status" value={asset.status} />
+        <Field label="Status" value={STATUS_LABELS[asset.status]} />
         <Field label="Make / model" value={`${asset.make} ${asset.model}`} />
         <Field label="Category" value={asset.category.name} />
         <Field label="Serial" value={asset.serial} />
@@ -180,7 +185,7 @@ export default async function AssetDetailPage({
                 <TableCell>{event.type}</TableCell>
                 <TableCell>
                   {event.fromStatus || event.toStatus
-                    ? `${event.fromStatus ?? "—"} → ${event.toStatus ?? "—"}`
+                    ? `${statusLabel(event.fromStatus)} → ${statusLabel(event.toStatus)}`
                     : "—"}
                 </TableCell>
                 <TableCell>

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { AssetStatus, type Prisma } from "@prisma/client";
 import { z } from "zod";
+import { STATUS_LABELS } from "@/lib/asset-lifecycle";
 import { requireRole } from "@/lib/authz";
 import { getDb } from "@/lib/db";
 import { Button } from "@/components/ui/button";
@@ -26,14 +27,6 @@ const filterSchema = z.object({
   categoryId: z.preprocess(blankToUndefined, z.string().min(1).optional()),
   siteId: z.preprocess(blankToUndefined, z.string().min(1).optional()),
 });
-
-const STATUS_LABELS: Record<AssetStatus, string> = {
-  ON_ORDER: "On order",
-  IN_STOCK: "In stock",
-  ASSIGNED: "Assigned",
-  IN_REPAIR: "In repair",
-  RETIRED: "Retired",
-};
 
 export default async function AssetsPage({
   searchParams,
