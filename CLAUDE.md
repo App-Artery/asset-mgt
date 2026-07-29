@@ -25,8 +25,25 @@ ADR: `docs/adr/ADR-001-vercel-neon-stack.md` · Stories: `docs/intake/asset-mgt/
 - **`AssetEvent` and `UserEvent` are append-only.** Never write an update or
   delete against either, in code or SQL. Corrections are new events, and the
   audit insert happens in the same transaction as the mutation it records
-  (`src/lib/user-admin.ts`). User deactivation is a flag (`deactivatedAt`),
-  never a delete.
+  (`src/lib/user-admin.ts`, `src/lib/asset-admin.ts`). User deactivation is a
+  flag (`deactivatedAt`), never a delete.
+- **Nothing in this codebase is ever deleted.** `RETIRED` is an asset's delete
+  (`db.asset.delete()` appears nowhere and must not); `deactivatedAt` is a
+  user's; categories and sites are renamed, never removed. A delete would
+  sever the audit trail that is the whole point of the register.
+- **Asset status transitions go through `src/lib/asset-lifecycle.ts`** — the
+  transition map is the single source of truth and status is not editable via
+  the plain update path. `transitionAssetStatus` locks the asset row
+  (`SELECT … FOR UPDATE`) before reading the current status: without it two
+  concurrent transitions both pass the guard and the history records a
+  transition that never happened.
+- **A tag is mandatory from delivery onwards**, enforced by the
+  `Asset_tag_required_when_tracked` CHECK constraint (hand-written in the
+  `am02_asset_lifecycle` migration — Prisma has no CHECK primitive, so preserve
+  the block if that migration is ever regenerated). `ON_ORDER` and `RETIRED`
+  are exempt: not yet delivered, and dead-on-arrival kit that goes back to the
+  supplier untagged. Application guards exist for the error message; the
+  constraint is the enforcement.
 - **Emails are lowercased at every write and lookup** (sign-in policy, admin
   actions, seed). A case mismatch silently locks staff out.
 - **Sign-in throttle lives in `src/lib/sign-in-policy.ts`**, counting
