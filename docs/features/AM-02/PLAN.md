@@ -188,3 +188,36 @@ the CHECK constraint forcing a data migration over existing rows, or any new aut
 
 Assignment and returns (AM-03) · Asset Tiger import (AM-04) · CSV/finance export (AM-05) ·
 global search (AM-07) · un-retiring via a `CORRECTION` event · asset photos and attachments.
+
+## Carry-forwards out of AM-02 (surfaced in review, deliberately not fixed here)
+
+**Into AM-04 (import) — both must be in its plan before implementation starts:**
+
+- **`INITIAL_ASSET_STATUSES` cannot express a legacy import.** `createAssetWithEvent` accepts only
+  `ON_ORDER` and `IN_STOCK`, so legacy rows arriving as `ASSIGNED`, `IN_REPAIR` or `RETIRED` cannot
+  be created at all. The tempting workaround — create, then transition into place — would fabricate
+  `STATUS_CHANGED` events for transitions that never happened, corrupting the audit trail the
+  register exists to provide. AM-04 needs a distinct `importAssetWithEvent` writing the reserved
+  `IMPORTED` event with the terminal status directly.
+- **The register has no pagination.** Fine at AM-02's volumes; ~400 imported assets render as a
+  single unbounded table.
+
+**Into AM-03 (assignment):**
+
+- **`updateAssetWithEvent` is an unlocked read-then-write.** Safe for the tag invariant only,
+  because the CHECK constraint backstops it. A concurrent repair transition's `DEFECTIVE` condition
+  can be clobbered by an in-flight edit, and the audit note records changed field _names_, not
+  values, so the lost value is unreconstructable. AM-03 adds assignment writes on this same pattern
+  with **no CHECK backstop** — decide there whether assignment needs `lockAsset` (closes the
+  millisecond window, ~2 lines) or a version/`updatedAt` check (closes the stale-form window too).
+
+**Into the retro / LEARNINGS §Testing:**
+
+- **A CHECK constraint proven red for NULL is not proven red for empty string.** The DB-layer bypass
+  test exercised `tag IS NULL` only and read as proof of the whole invariant, while `tag = ''` and
+  `'   '` sailed through — structurally the same trap as AM-01's race test passing with the lock
+  deleted. A falsifiability proof covers the case you wrote, not the invariant you meant.
+- **`skipIf`-gated suites can pass without the env var.** Vitest autoloads `.env`, which defines
+  `TEST_DATABASE_URL`, so the guard never engages locally and local test safety rests on the value
+  in an individual developer's `.env` rather than on the caller's explicit override. CI is genuine
+  (it sets the variable and has no `.env`).
