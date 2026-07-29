@@ -1,0 +1,20 @@
+type,name
+category,Laptop
+category,Desktop
+category,Monitor
+category,Server
+category,Network Equipment
+category,Printer
+category,Scanner
+category,Mobile Phone
+category,Tablet
+category,Docking Station
+category,Keyboard
+category,Mouse
+category,Headset
+category,Projector
+category,External Storage
+category,UPS
+category,Other
+site,Head Office
+site,Warehouse
