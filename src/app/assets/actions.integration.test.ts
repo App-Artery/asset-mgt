@@ -323,7 +323,17 @@ describe.skipIf(!testDatabaseUrl)("asset actions (real DB)", () => {
 
   it("rejects an incomplete create with a form error and writes nothing", async () => {
     await signInAs(Role.ADMIN_IT);
-    const before = await db.asset.count();
+    // Scoped to this file's own category, never the whole table: the test
+    // database is shared with the reference-data suite running concurrently,
+    // so a global count would flake on their rows. Both rejected creates below
+    // post this categoryId, so a row that wrongly landed would still be caught.
+    const scope = { categoryId };
+    const before = await db.asset.count({ where: scope });
+    // The scope must actually select this file's rows — a filter that matched
+    // nothing would make the count assertion below pass unconditionally
+    // (LEARNINGS §Testing, vacuous tests). Earlier tests here have created
+    // assets under this category.
+    expect(before).toBeGreaterThan(0);
 
     await expect(
       createAsset(null, formData(createFields({ make: "  " }))),
@@ -333,6 +343,6 @@ describe.skipIf(!testDatabaseUrl)("asset actions (real DB)", () => {
       createAsset(null, formData(createFields({ purchasePrice: "-1" }))),
     ).resolves.toMatchObject({ ok: false });
 
-    await expect(db.asset.count()).resolves.toBe(before);
+    await expect(db.asset.count({ where: scope })).resolves.toBe(before);
   });
 });
