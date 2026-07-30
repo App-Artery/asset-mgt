@@ -89,8 +89,10 @@ ADR: `docs/adr/ADR-001-vercel-neon-stack.md` · Stories: `docs/intake/asset-mgt/
   merely unrendered, so a later UI change cannot leak it. Person field
   visibility lives in exactly one place, `personSelectFor(role)` in
   `src/lib/person-visibility.ts`, which is the only place in the
-  codebase a `Person` select may be written. Widening it requires a DPA
-  note review (`docs/DPA-TRANSFER-NOTE.md`).
+  codebase a `Person` select **carrying PII** may be written — that
+  module's docblock names the two benign exceptions and gives the exact
+  grep to audit with. Widening it requires a DPA note review
+  (`docs/DPA-TRANSFER-NOTE.md`).
 - **Real-DB tests:** integration tests run against real Postgres via
   `describe.skipIf(!process.env.TEST_DATABASE_URL)` (see
   `src/lib/db.integration.test.ts`); local Docker Postgres 17 / CI service

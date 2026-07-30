@@ -100,7 +100,7 @@ export default async function AssetsPage({
   // At most one open assignment per asset — the partial unique index is what
   // makes this Map safe to build.
   const holderByAsset = new Map(
-    holders.map((holder) => [holder.assetId, holder.person.name]),
+    holders.map((holder) => [holder.assetId, holder.person]),
   );
 
   return (
@@ -214,7 +214,23 @@ export default async function AssetsPage({
                 <TableCell>{asset.category.name}</TableCell>
                 <TableCell>{STATUS_LABELS[asset.status]}</TableCell>
                 {canSeeHolders ? (
-                  <TableCell>{holderByAsset.get(asset.id) ?? "—"}</TableCell>
+                  <TableCell>
+                    {/* Rendered only inside canSeeHolders, so the link can
+                        never appear for a viewer /people/[id] would reject. */}
+                    {(() => {
+                      const holder = holderByAsset.get(asset.id);
+                      return holder ? (
+                        <Link
+                          href={`/people/${holder.id}`}
+                          className="underline underline-offset-4"
+                        >
+                          {holder.name}
+                        </Link>
+                      ) : (
+                        "—"
+                      );
+                    })()}
+                  </TableCell>
                 ) : null}
                 <TableCell>{asset.site?.name ?? "—"}</TableCell>
                 <TableCell>{asset.condition ?? "—"}</TableCell>

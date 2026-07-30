@@ -298,9 +298,20 @@ Email has no operational purpose in assignment.
 data, and granting the export while denying the screen is incoherent.
 
 **This lives in exactly one exported helper — `personSelectFor(role)` in
-`src/lib/person-visibility.ts` — which is the only place in the codebase a `Person` select is
-written.** That singularity is what makes it verifiable the way `requireRole` is. Enforced in
-the `select`, never in JSX.
+`src/lib/person-visibility.ts` — which is the only place in the codebase a `Person` select
+**carrying PII** is written.** That singularity is what makes it verifiable the way
+`requireRole` is. Enforced in the `select`, never in JSX.
+
+The qualification is load-bearing, not hedging (review finding). Two selects legitimately sit
+outside the helper: `/admin/users` (an `employeeRef`-only select on an `ADMIN_IT` route,
+narrower than the helper would give) and the leaver guard in `asset-admin.ts` (no PII field,
+and written as `tx.person.findUnique`, which the obvious grep shape does not even match). An
+audit instruction that produces an unexplained false positive on its first use teaches the
+next reviewer to skim — which destroys the property the singularity exists for. The module's
+docblock names both and gives the grep that catches both shapes.
+
+`PERSON_NAME_SELECT`, in the same module, is the narrow projection for surfaces that display
+only a name: it contains no field any role is denied, so no role check applies to it.
 
 ### 5.3 An existing leak AM-03 closes
 
@@ -404,8 +415,13 @@ extends to both).
 - **AM-04-CF-A — resolved in this PR, not deferred.** `createOpenAssignmentTx` now takes the
   asset row lock itself. `lockAsset` is private, so an external caller could not have
   honoured a "caller must hold the lock" contract without duplicating the raw SQL, which is
-  exactly how uniform lock ordering breaks. Re-entrant within a transaction, so the core path
-  pays nothing.
+  exactly how uniform lock ordering breaks. Re-entrant, so the core path does not block — it
+  pays one extra indexed round-trip, which is the right price for a seam that is safe by
+  construction rather than by comment.
+  **Binding on AM-04:** a bulk import calling this in a loop takes one row lock per asset, so
+  it must iterate in a **deterministic order (sort by `assetId`)**. Two concurrent imports
+  over overlapping sets in opposite orders would otherwise deadlock — and "run the import
+  again while the first is still going" is exactly what a nervous operator does.
 - **AM-04-CF-B.** AM-04's write paths must be brought inside the **scoped** reconciliation
   assertion (`src/lib/assignment.integration.test.ts`), or it silently narrows as the
   codebase grows around it.

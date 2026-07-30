@@ -302,9 +302,14 @@ async function assertPersonAssignable(tx: Tx, personId: string): Promise<void> {
  * review, AM-04-CF-A). `lockAsset` is private, so an external caller could not
  * honour a "caller must hold the lock" contract without duplicating the raw
  * SQL — and duplicating it is precisely how uniform lock ordering breaks. The
- * lock is re-entrant within a transaction, so the core path below, which has
- * already taken it, pays nothing for the second acquisition. The seam is now
- * safe by construction instead of by comment.
+ * lock is re-entrant, so the core path below, which already holds it, does not
+ * block; it does pay one extra indexed round-trip, which is the right price for
+ * a seam that is safe by construction rather than by comment.
+ *
+ * BULK CALLERS (AM-04): iterate in a DETERMINISTIC order — sort by `assetId`.
+ * This takes one row lock per asset, so two concurrent imports over overlapping
+ * sets in opposite orders deadlock. A single import is unaffected; two runs of
+ * the same import are not.
  */
 export async function createOpenAssignmentTx(
   tx: Tx,
