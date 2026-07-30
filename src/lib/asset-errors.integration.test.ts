@@ -11,6 +11,7 @@ import { randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  ALREADY_ASSIGNED_MESSAGE,
   DUPLICATE_TAG_MESSAGE,
   TAG_REQUIRED_MESSAGE,
   isTagConstraintViolation,
@@ -148,6 +149,44 @@ describe.skipIf(!testDatabaseUrl)("asset error mapping (real DB)", () => {
     expect(mapAssetError(error)).toEqual({
       ok: false,
       message: DUPLICATE_TAG_MESSAGE,
+    });
+  });
+
+  it("maps an open-assignment collision to the assignment message, not the tag one", async () => {
+    // AM-03 made P2002 ambiguous: it now means EITHER a duplicate tag OR a
+    // second open assignment. The discriminator reads Prisma's meta.target, so
+    // it must be pinned against an error Postgres genuinely raised — an assumed
+    // error shape is precisely what this cannot rest on.
+    //
+    // Unreachable through the actions (the lifecycle guard rejects
+    // ASSIGNED -> ASSIGNED before the index is consulted), which is exactly why
+    // it is driven directly here — same reasoning as the CHECK branches above.
+    const asset = await anAsset(`ASG-${randomUUID().slice(0, 8)}`);
+    const holder = await db.person.create({
+      data: {
+        name: "Errors Holder",
+        email: `errors-holder-${randomUUID()}@example.com`,
+      },
+    });
+    const other = await db.person.create({
+      data: {
+        name: "Errors Other",
+        email: `errors-other-${randomUUID()}@example.com`,
+      },
+    });
+    await db.assignment.create({
+      data: { assetId: asset.id, personId: holder.id },
+    });
+
+    const error = await capture(() =>
+      db.assignment.create({
+        data: { assetId: asset.id, personId: other.id },
+      }),
+    );
+
+    expect(mapAssetError(error)).toEqual({
+      ok: false,
+      message: ALREADY_ASSIGNED_MESSAGE,
     });
   });
 
