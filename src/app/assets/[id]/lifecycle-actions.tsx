@@ -13,14 +13,54 @@ import {
   type AssetActionState,
 } from "../actions";
 import { CONDITION_OPTIONS } from "../asset-form";
+import { ActionMessage } from "./action-message";
+import {
+  AssignForm,
+  ReturnFromPersonForm,
+  type PickerPerson,
+  type ReturnDestination,
+} from "./assignment-actions";
 
 /**
- * The AM-02 lifecycle moves. Not the same vocabulary as AssetStatus: IN_STOCK
- * is reachable from two statuses by two different actions (receiving a
- * delivery, returning from repair), and ASSIGNED has no move at all — AM-03
- * owns assignment.
+ * The lifecycle moves. Not the same vocabulary as AssetStatus: IN_STOCK is
+ * reachable from three statuses by three different actions (receiving a
+ * delivery, returning from repair, taking an asset back from its holder), so
+ * the move names the operator's intent and the status alone cannot.
+ *
+ * RETURN_FROM_PERSON covers BOTH ways out of ASSIGNED that are not retirement:
+ * a repair-bound return is that same action with toStatus=IN_REPAIR, never a
+ * separate "send to repair" (AM-03 DESIGN §4.2).
  */
-export type LifecycleMove = "RECEIVE" | "SEND_TO_REPAIR" | "RETURN" | "RETIRE";
+/**
+ * The standing warning on every free-text field that lands in `AssetEvent.notes`.
+ *
+ * `notes` is the one PII channel the code cannot close: `CLAUDE.md` forbids the
+ * application from writing personal data into the append-only event tables, and
+ * it does not — but an operator can type a name into a text box, and that text
+ * is rendered to ALL FOUR roles including STAFF_RO, who are otherwise shown no
+ * person data at all (AM-03 DESIGN §2.1). `AssetEvent` is never updated and
+ * never deleted, so a name typed here cannot be corrected or erased.
+ *
+ * "Reason" on retirement is the field most likely to attract one ("stolen from
+ * X's car"), which is why the hint is on every one of them and not just assign.
+ */
+function EventNoteHint() {
+  return (
+    <p className="text-muted-foreground text-xs">
+      Never personal data: this lands in the permanent event log, is visible to
+      all staff, and cannot be edited or removed. Describe the asset, not a
+      person.
+    </p>
+  );
+}
+
+export type LifecycleMove =
+  | "RECEIVE"
+  | "ASSIGN"
+  | "SEND_TO_REPAIR"
+  | "RETURN"
+  | "RETURN_FROM_PERSON"
+  | "RETIRE";
 
 /**
  * Lifecycle buttons for an asset's current status. The server component
@@ -31,9 +71,14 @@ export type LifecycleMove = "RECEIVE" | "SEND_TO_REPAIR" | "RETURN" | "RETIRE";
 export function LifecycleActions({
   assetId,
   moves,
+  people,
+  returnDestinations,
 }: {
   assetId: string;
   moves: readonly LifecycleMove[];
+  /** Populated only when the assign form renders; never carries an email. */
+  people: readonly PickerPerson[];
+  returnDestinations: readonly ReturnDestination[];
 }) {
   if (moves.length === 0) {
     return (
@@ -46,6 +91,15 @@ export function LifecycleActions({
   return (
     <div className="flex flex-col gap-6">
       {moves.includes("RECEIVE") ? <ReceiveForm assetId={assetId} /> : null}
+      {moves.includes("ASSIGN") ? (
+        <AssignForm assetId={assetId} people={people} />
+      ) : null}
+      {moves.includes("RETURN_FROM_PERSON") ? (
+        <ReturnFromPersonForm
+          assetId={assetId}
+          destinations={returnDestinations}
+        />
+      ) : null}
       {moves.includes("SEND_TO_REPAIR") ? (
         <RepairForm
           assetId={assetId}
@@ -64,22 +118,15 @@ export function LifecycleActions({
           defaultCondition="GOOD"
         />
       ) : null}
-      {moves.includes("RETIRE") ? <RetireForm assetId={assetId} /> : null}
+      {moves.includes("RETIRE") ? (
+        <RetireForm
+          assetId={assetId}
+          // RETURN_FROM_PERSON is offered from ASSIGNED and nowhere else, so it
+          // is the signal that this asset is currently held.
+          isHeld={moves.includes("RETURN_FROM_PERSON")}
+        />
+      ) : null}
     </div>
-  );
-}
-
-function ActionMessage({ state }: { state: AssetActionState }) {
-  if (!state) return null;
-  return (
-    <p
-      role="status"
-      className={
-        state.ok ? "text-muted-foreground text-sm" : "text-destructive text-sm"
-      }
-    >
-      {state.message}
-    </p>
   );
 }
 
@@ -113,6 +160,7 @@ function ReceiveForm({ assetId }: { assetId: string }) {
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="receive-notes">Notes</Label>
         <Input id="receive-notes" name="notes" disabled={pending} />
+        <EventNoteHint />
       </div>
       <Button type="submit" disabled={pending} className="w-fit">
         {pending ? "Receiving…" : "Receive and tag"}
@@ -164,6 +212,7 @@ function RepairForm({
       <div className="flex flex-col gap-1.5">
         <Label htmlFor={`${idPrefix}-notes`}>Notes</Label>
         <Input id={`${idPrefix}-notes`} name="notes" disabled={pending} />
+        <EventNoteHint />
       </div>
       <Button
         type="submit"
@@ -179,7 +228,7 @@ function RepairForm({
 }
 
 /** RETIRED is terminal and is the closest thing to a delete this app has. */
-function RetireForm({ assetId }: { assetId: string }) {
+function RetireForm({ assetId, isHeld }: { assetId: string; isHeld: boolean }) {
   const [state, formAction, pending] = useActionState(retireAsset, null);
   return (
     <form
@@ -197,9 +246,17 @@ function RetireForm({ assetId }: { assetId: string }) {
     >
       <h3 className="font-medium">Retire</h3>
       <input type="hidden" name="assetId" value={assetId} />
+      {isHeld ? (
+        <p className="text-muted-foreground text-sm">
+          This asset is still out with someone. Retiring it closes the
+          assignment for you — stolen and lost kit must be retirable without
+          first recording a return that never happened.
+        </p>
+      ) : null}
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="retire-notes">Reason</Label>
         <Input id="retire-notes" name="notes" disabled={pending} />
+        <EventNoteHint />
       </div>
       <Button
         type="submit"

@@ -40,6 +40,24 @@ outside Kenya** under **sections 48–49 of the Data Protection Act, 2019**.
   restricted to provisioned, role-scoped accounts (deny-by-default auth);
   independent nightly logical backups retained under the client's GitHub
   organisation.
+- **Role-based visibility tiers** — the technical measure implementing the
+  minimisation claim above. The three staff fields are not exposed uniformly
+  to every authenticated user; visibility is decided in one place
+  (`personSelectFor(role)`, `src/lib/person-visibility.ts`) and enforced in
+  the database `select`, so a role that may not see a field is never sent it:
+
+  | Field                | ADMIN_IT | PROCUREMENT | FINANCE | STAFF_RO |
+  | -------------------- | -------- | ----------- | ------- | -------- |
+  | `Person.name`        | yes      | yes         | yes     | own only |
+  | `Person.employeeRef` | yes      | yes         | yes     | no       |
+  | `Person.email`       | yes      | no          | no      | no       |
+
+  The **set of stored personal-data fields does not change**, so this is
+  **not a new transfer**. It is recorded here because the "Reviewing this
+  note if scope changes" clause below is triggered by a change in how the
+  data is displayed, and widening any cell in the table triggers it again.
+  Engineering change of 2026-07-30; no legal review is implied.
+
 - **Necessity:** transfer is necessary for the performance of the tool the
   data subjects' employer operates for its internal asset management
   (s. 48(3) grounds also arguably available; safeguards are relied on

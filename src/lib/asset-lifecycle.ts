@@ -1,4 +1,4 @@
-import type { AssetStatus } from "@prisma/client";
+import type { AssetCondition, AssetStatus } from "@prisma/client";
 
 /**
  * The asset lifecycle as data (docs/features/AM-02/PLAN.md §Lifecycle):
@@ -42,6 +42,30 @@ export const STATUS_LABELS: Readonly<Record<AssetStatus, string>> = {
 
 /** Statuses that do not require a tag — mirrors the exemptions in the DB CHECK. */
 const TAG_EXEMPT_STATUSES: readonly AssetStatus[] = ["ON_ORDER", "RETIRED"];
+
+/**
+ * Whether a return must carry a free-text condition note (AM-03 DESIGN §4.4).
+ *
+ * The AssetCondition enum is mandatory on EVERY return — that is the structured
+ * field answering "in what state", and it is one click. Prose is demanded only
+ * where it carries information: kit going to repair, or coming back POOR or
+ * DEFECTIVE. Requiring it on every routine "GOOD, back on the shelf" return
+ * trains operators to type "ok" and destroys the signal.
+ *
+ * Compared as string literals rather than through the Prisma enum objects on
+ * purpose: this module is client-safe, and a value import of @prisma/client
+ * would drag the client into the browser bundle.
+ */
+export function conditionNotesRequiredFor(
+  toStatus: AssetStatus,
+  condition: AssetCondition,
+): boolean {
+  return (
+    toStatus === "IN_REPAIR" ||
+    condition === "POOR" ||
+    condition === "DEFECTIVE"
+  );
+}
 
 /** Rejection of a status change the lifecycle does not permit. */
 export class IllegalTransitionError extends Error {

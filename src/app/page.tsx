@@ -36,6 +36,18 @@ export default async function HomePage() {
       <Link href="/assets" className="text-sm underline underline-offset-4">
         Asset register
       </Link>
+      {/* Every role, including STAFF_RO: /me/assignments is self-scoped from the
+          session, so it is the one place a read-only staff user sees assignment
+          data — their own. Nothing here links to a /people/[id] view, which is
+          role-gated to the three privileged roles (AM-03 DESIGN §5.1); it is
+          reached by clicking a holder's name on an asset's detail page, which
+          only renders inside that page's canViewAssignments branch. */}
+      <Link
+        href="/me/assignments"
+        className="text-sm underline underline-offset-4"
+      >
+        My assignments
+      </Link>
       {isActiveAdmin ? (
         <Link
           href="/admin/users"

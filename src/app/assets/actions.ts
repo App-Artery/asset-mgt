@@ -6,15 +6,20 @@ import { AssetCondition, AssetStatus } from "@prisma/client";
 import { z } from "zod";
 import {
   INITIAL_ASSET_STATUSES,
+  RETURN_STATUSES,
+  assignAsset as assignAssetRecord,
   createAssetWithEvent,
+  returnAsset as returnAssetRecord,
   transitionAssetStatus,
   updateAssetWithEvent,
 } from "@/lib/asset-admin";
 import {
+  CONDITION_NOTES_REQUIRED_MESSAGE,
   INVALID_FIELDS_MESSAGE,
   TAG_REQUIRED_MESSAGE,
   mapAssetError,
 } from "@/lib/asset-errors";
+import { conditionNotesRequiredFor } from "@/lib/asset-lifecycle";
 import { requireRole } from "@/lib/authz";
 import { getDb } from "@/lib/db";
 
@@ -103,6 +108,31 @@ const retireSchema = z.object({
   notes: optionalText,
 });
 
+const assignSchema = z.object({
+  assetId: z.string().min(1),
+  personId: z.string().min(1),
+  notes: optionalText,
+});
+
+// Condition is MANDATORY on every return — it is the structured answer to
+// "in what state" (AC-2), and z.enum rejects the empty string a "not recorded"
+// option would submit. The free-text note is required only where it carries
+// information; conditionNotesRequiredFor is shared with the form so the UI's
+// required marker and this guard cannot drift apart.
+const returnSchema = z
+  .object({
+    assetId: z.string().min(1),
+    toStatus: z.enum(RETURN_STATUSES),
+    condition: z.enum(AssetCondition),
+    conditionNotes: optionalText,
+  })
+  .refine(
+    (data) =>
+      !conditionNotesRequiredFor(data.toStatus, data.condition) ||
+      data.conditionNotes !== null,
+    { path: ["conditionNotes"], message: "A condition note is required." },
+  );
+
 function assetFieldsFrom(formData: FormData) {
   return {
     tag: formData.get("tag"),
@@ -122,6 +152,23 @@ function assetFieldsFrom(formData: FormData) {
 function revalidateAsset(assetId: string): void {
   revalidatePath("/assets");
   revalidatePath(`/assets/${assetId}`);
+}
+
+/**
+ * Assignment changes who holds what, so the person views go stale too — and
+ * they are separate routes with their own caches. `/people/[id]` is revalidated
+ * by route pattern rather than by id: a return has closed the assignment by the
+ * time we get here, and re-reading the row just to name one path would be a
+ * query in service of a cache hint.
+ *
+ * All of this runs OUTSIDE the transaction, deliberately: nothing slow belongs
+ * inside AM-03's transactions, which are the longest in the codebase and run
+ * against Prisma's default 5s interactive-transaction timeout.
+ */
+function revalidateAssignment(assetId: string): void {
+  revalidateAsset(assetId);
+  revalidatePath("/me/assignments");
+  revalidatePath("/people/[id]", "page");
 }
 
 // ---------------------------------------------------------------------------
@@ -277,6 +324,87 @@ export async function retireAsset(
   });
 }
 
+/**
+ * Hands an asset to a member of staff. IN_STOCK -> ASSIGNED.
+ *
+ * ADMIN_IT + PROCUREMENT, identical to every other write action here: both
+ * roles already see person names and employeeRef under personSelectFor, so this
+ * grants no visibility the read gate does not, and procurement handing out
+ * newly received kit is a real workflow (AM-03 DESIGN §2.2, approved).
+ */
+export async function assignAssetToPerson(
+  _previous: AssetActionState,
+  formData: FormData,
+): Promise<AssetActionState> {
+  const { userId: actorId } = await requireRole("ADMIN_IT", "PROCUREMENT");
+  const parsed = assignSchema.safeParse({
+    assetId: formData.get("assetId"),
+    personId: formData.get("personId"),
+    notes: formData.get("notes"),
+  });
+  if (!parsed.success) {
+    return { ok: false, message: INVALID_FIELDS_MESSAGE };
+  }
+  try {
+    await assignAssetRecord(getDb(), { ...parsed.data, actorId });
+  } catch (error) {
+    const failure = mapAssetError(error);
+    if (!failure) throw error;
+    return failure;
+  }
+  revalidateAssignment(parsed.data.assetId);
+  return { ok: true, message: "Asset assigned." };
+}
+
+/**
+ * Takes an asset back. ASSIGNED -> IN_STOCK, or ASSIGNED -> IN_REPAIR for the
+ * repair-bound return of AC-2.
+ *
+ * Note there is no separate "send an assigned asset to repair" action: on an
+ * ASSIGNED asset that IS this action with toStatus=IN_REPAIR, so the closing of
+ * the assignment and the status change stay one transaction and one event.
+ */
+export async function returnAssetFromPerson(
+  _previous: AssetActionState,
+  formData: FormData,
+): Promise<AssetActionState> {
+  const { userId: actorId } = await requireRole("ADMIN_IT", "PROCUREMENT");
+  const parsed = returnSchema.safeParse({
+    assetId: formData.get("assetId"),
+    toStatus: formData.get("toStatus"),
+    condition: formData.get("condition"),
+    conditionNotes: formData.get("conditionNotes"),
+  });
+  if (!parsed.success) {
+    // A missing condition note is a specific, fixable thing — saying only
+    // "check the form" sends the operator looking at the fields that are fine.
+    const notesAtFault = parsed.error.issues.some(
+      (issue) => issue.path[0] === "conditionNotes",
+    );
+    return {
+      ok: false,
+      message: notesAtFault
+        ? CONDITION_NOTES_REQUIRED_MESSAGE
+        : INVALID_FIELDS_MESSAGE,
+    };
+  }
+  try {
+    await returnAssetRecord(getDb(), { ...parsed.data, actorId });
+  } catch (error) {
+    const failure = mapAssetError(error);
+    if (!failure) throw error;
+    return failure;
+  }
+  revalidateAssignment(parsed.data.assetId);
+  return {
+    ok: true,
+    message:
+      parsed.data.toStatus === AssetStatus.IN_REPAIR
+        ? "Returned and sent to repair."
+        : "Returned to stock.",
+  };
+}
+
 async function runTransition(
   assetId: string,
   toStatus: AssetStatus,
@@ -295,6 +423,18 @@ async function runTransition(
       tag: options.tag,
       condition: options.condition,
       notes: options.notes,
+      // These AM-02 actions predate assignment, and on an ASSIGNED asset the
+      // write layer closes the open assignment for them. The UI never offers
+      // them there — but a STALE FORM does: an operator holding a detail page
+      // that still says IN_STOCK, on an asset someone else has since assigned,
+      // clicks "Send to repair" and closes a real assignment.
+      //
+      // This carries whatever note they gave onto the closing record. It does
+      // NOT guarantee one — `notes` is optional in both schemas, because from
+      // IN_STOCK there is no assignment to describe. The guarantee for the
+      // repair-bound case lives in transitionAssetStatusTx, which knows the
+      // locked status and rejects that closure without a note.
+      conditionNotes: options.notes,
       actorId,
     });
   } catch (error) {
@@ -302,6 +442,9 @@ async function runTransition(
     if (!failure) throw error;
     return failure;
   }
-  revalidateAsset(assetId);
+  // Cheap and correct on every path: these actions cannot know whether the
+  // write layer closed an assignment, and revalidating a person view that did
+  // not change costs nothing next to showing a stale holder.
+  revalidateAssignment(assetId);
   return { ok: true, message: options.successMessage };
 }

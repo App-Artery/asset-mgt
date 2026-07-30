@@ -101,39 +101,67 @@ model Person {
   updatedAt   DateTime     @updatedAt
 }
 
+// Assignment is a STATE row, not an audit row (AM-03 advisor ruling, and the
+// rule is restated in CLAUDE.md). Exactly two columns are mutable —
+// `returnedAt` and `conditionNotes` — set exactly ONCE, by the return path, on
+// a row where `returnedAt IS NULL`. Every other column is write-once at insert,
+// and Assignment rows are never deleted. The audit anchor is the
+// ASSIGNED/RETURNED AssetEvent pair; AssetEvent and UserEvent remain
+// append-only and this bounded exception does NOT extend to them.
+//
+// Two constraints the schema language cannot express live in the
+// am03_assignment migration: a PARTIAL unique index giving each asset at most
+// one open assignment (the AC-1 trust gate), and a CHECK that a return cannot
+// predate its checkout.
 model Assignment {
-  id             String    @id @default(cuid())
+  id             String       @id @default(cuid())
   assetId        String
-  asset          Asset     @relation(fields: [assetId], references: [id])
+  asset          Asset        @relation(fields: [assetId], references: [id])
   personId       String
-  person         Person    @relation(fields: [personId], references: [id])
-  checkedOutAt   DateTime  @default(now())
+  person         Person       @relation(fields: [personId], references: [id])
+  checkedOutAt   DateTime     @default(now())
   returnedAt     DateTime?
   conditionNotes String?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  events         AssetEvent[]
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 
   @@index([assetId])
   @@index([personId])
+  // The per-person view ("everything X currently holds") and AM-07's search
+  // both filter on exactly this pair.
+  @@index([personId, returnedAt])
 }
 
 // Append-only audit trail. Rows are only ever inserted and read — never updated
 // or deleted. Corrections are new CORRECTION events referencing the same asset.
 model AssetEvent {
-  id         String         @id @default(cuid())
-  assetId    String
-  asset      Asset          @relation(fields: [assetId], references: [id])
-  type       AssetEventType
-  fromStatus AssetStatus?
-  toStatus   AssetStatus?
-  actorId    String?
+  id           String         @id @default(cuid())
+  assetId      String
+  asset        Asset          @relation(fields: [assetId], references: [id])
+  type         AssetEventType
+  fromStatus   AssetStatus?
+  toStatus     AssetStatus?
+  actorId      String?
   // Restrict, not SetNull: deleting a User must never silently blank audit
   // attribution (users are deactivated, never deleted). Matches UserEvent —
   // the advisor attached this as an AM-01 condition to apply the moment the
   // asset write path opened, which is this story.
-  actor      User?          @relation(fields: [actorId], references: [id], onDelete: Restrict)
-  notes      String?
-  at         DateTime       @default(now())
+  actor        User?          @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  // Set on ASSIGNED and RETURNED events. This FK exists to keep PERSONAL DATA
+  // OUT of this append-only table: without it, "who held it" could only be
+  // recorded as free text in `notes`, putting a copy of a person's name into a
+  // table that is never updated and never deleted — where a name change or a
+  // DPA erasure request is unhonourable by construction. The link keeps exactly
+  // one copy of the person reference (on Assignment) and the history renders by
+  // join. Restrict matches actorId: nothing may silently blank attribution.
+  //
+  // Standing rule: no personal data — names, emails, employee refs — is ever
+  // written into AssetEvent.notes or any UserEvent field.
+  assignmentId String?
+  assignment   Assignment?    @relation(fields: [assignmentId], references: [id], onDelete: Restrict)
+  notes        String?
+  at           DateTime       @default(now())
 
   @@index([assetId, at])
 }

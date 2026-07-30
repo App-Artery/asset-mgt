@@ -4,6 +4,10 @@ import { z } from "zod";
 import { STATUS_LABELS } from "@/lib/asset-lifecycle";
 import { requireRole } from "@/lib/authz";
 import { getDb } from "@/lib/db";
+import {
+  PERSON_NAME_SELECT,
+  canViewAssignments,
+} from "@/lib/person-visibility";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
@@ -41,6 +45,10 @@ export default async function AssetsPage({
     "STAFF_RO",
   );
   const canWrite = role === "ADMIN_IT" || role === "PROCUREMENT";
+  // Checked BEFORE the holder query, never in the JSX: for a STAFF_RO viewer the
+  // register carries no assignment and no person data at all, because none is
+  // fetched (advisor condition 9).
+  const canSeeHolders = canViewAssignments(role);
 
   const parsed = filterSchema.safeParse(await searchParams);
   const filters = parsed.success ? parsed.data : {};
@@ -71,6 +79,29 @@ export default async function AssetsPage({
     db.category.findMany({ orderBy: { name: "asc" } }),
     db.site.findMany({ orderBy: { name: "asc" } }),
   ]);
+
+  // A second query rather than an `assignments` include on the one above: a
+  // role-conditional include gives the whole row a union type, and the branch
+  // that matters most — the one where nothing person-shaped is fetched — is
+  // then the hardest to read. One extra query, and the STAFF_RO path never
+  // touches the Assignment or Person tables.
+  const holders =
+    canSeeHolders && assets.length > 0
+      ? await db.assignment.findMany({
+          where: { returnedAt: null, assetId: { in: assets.map((a) => a.id) } },
+          // The register shows a name and nothing else, so it fetches a name
+          // and nothing else. personSelectFor(ADMIN_IT) would pull an email
+          // into this payload that no cell renders — within the tier, so not a
+          // leak, but it spends the "data not fetched cannot leak" property for
+          // no benefit.
+          select: { assetId: true, person: { select: PERSON_NAME_SELECT } },
+        })
+      : [];
+  // At most one open assignment per asset — the partial unique index is what
+  // makes this Map safe to build.
+  const holderByAsset = new Map(
+    holders.map((holder) => [holder.assetId, holder.person]),
+  );
 
   return (
     <main className="mx-auto flex min-h-screen max-w-5xl flex-col gap-8 p-8">
@@ -161,6 +192,7 @@ export default async function AssetsPage({
               <TableHead>Make / model</TableHead>
               <TableHead>Category</TableHead>
               <TableHead>Status</TableHead>
+              {canSeeHolders ? <TableHead>Held by</TableHead> : null}
               <TableHead>Site</TableHead>
               <TableHead>Condition</TableHead>
             </TableRow>
@@ -181,6 +213,25 @@ export default async function AssetsPage({
                 </TableCell>
                 <TableCell>{asset.category.name}</TableCell>
                 <TableCell>{STATUS_LABELS[asset.status]}</TableCell>
+                {canSeeHolders ? (
+                  <TableCell>
+                    {/* Rendered only inside canSeeHolders, so the link can
+                        never appear for a viewer /people/[id] would reject. */}
+                    {(() => {
+                      const holder = holderByAsset.get(asset.id);
+                      return holder ? (
+                        <Link
+                          href={`/people/${holder.id}`}
+                          className="underline underline-offset-4"
+                        >
+                          {holder.name}
+                        </Link>
+                      ) : (
+                        "—"
+                      );
+                    })()}
+                  </TableCell>
+                ) : null}
                 <TableCell>{asset.site?.name ?? "—"}</TableCell>
                 <TableCell>{asset.condition ?? "—"}</TableCell>
               </TableRow>

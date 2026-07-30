@@ -35,13 +35,22 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 import { auth } from "@/auth";
 import { AuthorizationError } from "@/lib/authz";
 import {
+  assignAssetToPerson,
   createAsset,
   receiveAndTagAsset,
   retireAsset,
+  returnAssetFromPerson,
   returnFromRepair,
   sendToRepair,
   updateAsset,
 } from "@/app/assets/actions";
+import {
+  ALREADY_ASSIGNED_MESSAGE,
+  CONDITION_NOTES_REQUIRED_MESSAGE,
+  DUPLICATE_TAG_MESSAGE,
+  ILLEGAL_TRANSITION_MESSAGE,
+  PERSON_NOT_ASSIGNABLE_MESSAGE,
+} from "@/lib/asset-errors";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const mockAuth = auth as unknown as Mock;
@@ -161,6 +170,8 @@ describe.skipIf(!testDatabaseUrl)("asset actions (real DB)", () => {
     ["sendToRepair", sendToRepair],
     ["returnFromRepair", returnFromRepair],
     ["retireAsset", retireAsset],
+    ["assignAssetToPerson", assignAssetToPerson],
+    ["returnAssetFromPerson", returnAssetFromPerson],
   ] as const;
 
   for (const [name, action] of mutatingActions) {
@@ -394,5 +405,354 @@ describe.skipIf(!testDatabaseUrl)("asset actions (real DB)", () => {
     ).resolves.toMatchObject({ ok: false });
 
     await expect(db.asset.count({ where: scope })).resolves.toBe(before);
+  });
+
+  describe("assignment", () => {
+    /** An IN_STOCK, tagged asset ready to be handed out. */
+    async function aStockedAsset() {
+      const id = await createAssetExpectingRedirect(
+        createFields({ tag: uniqueTag(), status: AssetStatus.IN_STOCK }),
+      );
+      return db.asset.findUniqueOrThrow({ where: { id } });
+    }
+
+    async function aPerson(name = "Assignee") {
+      return db.person.create({
+        data: {
+          name,
+          email: `assignee-${randomUUID()}@example.com`,
+          employeeRef: `REF-${randomUUID().slice(0, 8)}`,
+        },
+      });
+    }
+
+    it("lets both write roles assign and take back an asset", async () => {
+      for (const role of [Role.ADMIN_IT, Role.PROCUREMENT]) {
+        const actor = await signInAs(role);
+        const asset = await aStockedAsset();
+        const holder = await aPerson();
+
+        await expect(
+          assignAssetToPerson(
+            null,
+            formData({ assetId: asset.id, personId: holder.id, notes: "" }),
+          ),
+        ).resolves.toMatchObject({ ok: true });
+
+        const assigned = await db.asset.findUniqueOrThrow({
+          where: { id: asset.id },
+        });
+        expect(assigned.status).toBe(AssetStatus.ASSIGNED);
+
+        await expect(
+          returnAssetFromPerson(
+            null,
+            formData({
+              assetId: asset.id,
+              toStatus: AssetStatus.IN_STOCK,
+              condition: "GOOD",
+              conditionNotes: "",
+            }),
+          ),
+        ).resolves.toMatchObject({ ok: true });
+
+        const returned = await db.asset.findUniqueOrThrow({
+          where: { id: asset.id },
+          include: { events: { orderBy: [{ at: "asc" }, { id: "asc" }] } },
+        });
+        expect(returned.status).toBe(AssetStatus.IN_STOCK);
+        expect(returned.events.map((event) => event.type)).toEqual([
+          AssetEventType.CREATED,
+          AssetEventType.ASSIGNED,
+          AssetEventType.RETURNED,
+        ]);
+        expect(returned.events[1]?.actorId).toBe(actor.id);
+      }
+    });
+
+    it("requires a condition note for a repair-bound return", async () => {
+      await signInAs(Role.ADMIN_IT);
+      const asset = await aStockedAsset();
+      const holder = await aPerson();
+      await assignAssetToPerson(
+        null,
+        formData({ assetId: asset.id, personId: holder.id, notes: "" }),
+      );
+
+      await expect(
+        returnAssetFromPerson(
+          null,
+          formData({
+            assetId: asset.id,
+            toStatus: AssetStatus.IN_REPAIR,
+            condition: "DEFECTIVE",
+            conditionNotes: "   ",
+          }),
+        ),
+      ).resolves.toMatchObject({
+        ok: false,
+        message: CONDITION_NOTES_REQUIRED_MESSAGE,
+      });
+
+      // Rejected at the boundary: the asset is untouched and still held.
+      const untouched = await db.asset.findUniqueOrThrow({
+        where: { id: asset.id },
+      });
+      expect(untouched.status).toBe(AssetStatus.ASSIGNED);
+
+      // …and the same return succeeds once the note is supplied.
+      await expect(
+        returnAssetFromPerson(
+          null,
+          formData({
+            assetId: asset.id,
+            toStatus: AssetStatus.IN_REPAIR,
+            condition: "DEFECTIVE",
+            conditionNotes: "Won't hold charge",
+          }),
+        ),
+      ).resolves.toMatchObject({ ok: true });
+    });
+
+    it("accepts a routine GOOD return with no note", async () => {
+      // The other half of the rule: demanding prose on every return trains
+      // operators to type "ok". Without this test the guard could tighten to
+      // "always required" and nothing would fail.
+      await signInAs(Role.ADMIN_IT);
+      const asset = await aStockedAsset();
+      const holder = await aPerson();
+      await assignAssetToPerson(
+        null,
+        formData({ assetId: asset.id, personId: holder.id, notes: "" }),
+      );
+
+      await expect(
+        returnAssetFromPerson(
+          null,
+          formData({
+            assetId: asset.id,
+            toStatus: AssetStatus.IN_STOCK,
+            condition: "GOOD",
+            conditionNotes: "",
+          }),
+        ),
+      ).resolves.toMatchObject({ ok: true });
+    });
+
+    it("closes the assignment when a stale sendToRepair lands on an assigned asset", async () => {
+      // The reachable stale-form path: an operator holds a detail page that
+      // still says IN_STOCK, someone else assigns the asset, and the operator
+      // clicks "Send to repair". The UI never offers that move on an ASSIGNED
+      // asset, so this is the only way in — and it must still leave a coherent
+      // register: assignment closed, ONE event, and the operator's note carried
+      // onto the closing record rather than dropped.
+      await signInAs(Role.ADMIN_IT);
+      const asset = await aStockedAsset();
+      const holder = await aPerson("Stale Form Holder");
+      await assignAssetToPerson(
+        null,
+        formData({ assetId: asset.id, personId: holder.id, notes: "" }),
+      );
+
+      await expect(
+        sendToRepair(
+          null,
+          formData({
+            assetId: asset.id,
+            condition: "DEFECTIVE",
+            notes: "Screen cracked in transit",
+          }),
+        ),
+      ).resolves.toMatchObject({ ok: true });
+
+      const after = await db.asset.findUniqueOrThrow({
+        where: { id: asset.id },
+        include: {
+          events: { orderBy: [{ at: "asc" }, { id: "asc" }] },
+          assignments: true,
+        },
+      });
+      expect(after.status).toBe(AssetStatus.IN_REPAIR);
+      expect(after.assignments).toHaveLength(1);
+      expect(after.assignments[0]?.returnedAt).not.toBeNull();
+      expect(after.assignments[0]?.conditionNotes).toBe(
+        "Screen cracked in transit",
+      );
+      // One event, typed RETURNED because it closed an assignment — not a
+      // STATUS_CHANGED, and not two rows.
+      expect(after.events.map((event) => event.type)).toEqual([
+        AssetEventType.CREATED,
+        AssetEventType.ASSIGNED,
+        AssetEventType.RETURNED,
+      ]);
+      expect(after.events[2]).toMatchObject({
+        fromStatus: AssetStatus.ASSIGNED,
+        toStatus: AssetStatus.IN_REPAIR,
+      });
+    });
+
+    it("refuses a stale sendToRepair that would close an assignment with no note", async () => {
+      // Copilot review. The stale-form path closes a real assignment, and
+      // `sendToRepair`'s schema cannot require a note — from IN_STOCK there is
+      // no assignment to describe. So the same repair-bound closure carried a
+      // note through returnAssetFromPerson and a silent null through here.
+      //
+      // The rule now lives in the write layer against the LOCKED status, which
+      // is the only place that knows an assignment is actually being closed.
+      await signInAs(Role.ADMIN_IT);
+      const asset = await aStockedAsset();
+      const holder = await aPerson("Noteless Repair");
+      await assignAssetToPerson(
+        null,
+        formData({ assetId: asset.id, personId: holder.id, notes: "" }),
+      );
+
+      await expect(
+        sendToRepair(
+          null,
+          formData({ assetId: asset.id, condition: "DEFECTIVE", notes: "  " }),
+        ),
+      ).resolves.toMatchObject({
+        ok: false,
+        message: CONDITION_NOTES_REQUIRED_MESSAGE,
+      });
+
+      // Rejected inside the transaction: the asset is untouched and still held.
+      const untouched = await db.asset.findUniqueOrThrow({
+        where: { id: asset.id },
+        include: { assignments: true },
+      });
+      expect(untouched.status).toBe(AssetStatus.ASSIGNED);
+      expect(untouched.assignments[0]?.returnedAt).toBeNull();
+
+      // The same move succeeds once the note is supplied.
+      await expect(
+        sendToRepair(
+          null,
+          formData({
+            assetId: asset.id,
+            condition: "DEFECTIVE",
+            notes: "Keyboard flooded",
+          }),
+        ),
+      ).resolves.toMatchObject({ ok: true });
+    });
+
+    it("still sends an unassigned asset to repair without a note", async () => {
+      // The other half: the note is required only where an assignment is being
+      // closed. Without this, the guard could tighten to "always required" and
+      // break the ordinary IN_STOCK -> IN_REPAIR path with nothing failing.
+      await signInAs(Role.ADMIN_IT);
+      const asset = await aStockedAsset();
+
+      await expect(
+        sendToRepair(
+          null,
+          formData({ assetId: asset.id, condition: "DEFECTIVE", notes: "" }),
+        ),
+      ).resolves.toMatchObject({ ok: true });
+    });
+
+    it("refuses to assign to a deactivated person with a specific message", async () => {
+      await signInAs(Role.ADMIN_IT);
+      const asset = await aStockedAsset();
+      const leaver = await aPerson("Leaver");
+      await db.user.create({
+        data: {
+          email: `leaver-action-${randomUUID()}@example.com`,
+          name: "Leaver",
+          role: Role.STAFF_RO,
+          personId: leaver.id,
+          deactivatedAt: new Date(),
+        },
+      });
+
+      await expect(
+        assignAssetToPerson(
+          null,
+          formData({ assetId: asset.id, personId: leaver.id, notes: "" }),
+        ),
+      ).resolves.toMatchObject({
+        ok: false,
+        message: PERSON_NOT_ASSIGNABLE_MESSAGE,
+      });
+    });
+
+    it("reports a duplicate tag and an assignment conflict distinctly", async () => {
+      // P2002 stopped being synonymous with "duplicate tag" when AM-03 added
+      // Assignment_one_open_per_asset. Both messages are pinned here against
+      // REAL Postgres errors, because the discriminator reads Prisma's
+      // meta.target — an assumed error shape is exactly what this must not
+      // rest on. If a third unique index is added, this test is the tripwire.
+      await signInAs(Role.ADMIN_IT);
+
+      const tag = uniqueTag();
+      await createAssetExpectingRedirect(
+        createFields({ tag, status: AssetStatus.IN_STOCK }),
+      );
+      await expect(
+        createAsset(
+          null,
+          formData(createFields({ tag, status: AssetStatus.IN_STOCK })),
+        ),
+      ).resolves.toMatchObject({
+        ok: false,
+        message: DUPLICATE_TAG_MESSAGE,
+      });
+
+      // On a CONSISTENT asset the index is never consulted: the lifecycle guard
+      // rejects ASSIGNED -> ASSIGNED first. Assert the exact message, not
+      // "anything but the tag one" — the loose form passes with the
+      // discriminator deleted entirely (title/assertion agreement,
+      // LEARNINGS §Testing).
+      const asset = await aStockedAsset();
+      const first = await aPerson("First");
+      const second = await aPerson("Second");
+      await assignAssetToPerson(
+        null,
+        formData({ assetId: asset.id, personId: first.id, notes: "" }),
+      );
+      await expect(
+        assignAssetToPerson(
+          null,
+          formData({ assetId: asset.id, personId: second.id, notes: "" }),
+        ),
+      ).resolves.toMatchObject({
+        ok: false,
+        message: ILLEGAL_TRANSITION_MESSAGE,
+      });
+    });
+
+    it("reports a desynced asset's index collision as an assignment conflict", async () => {
+      // ALREADY_ASSIGNED_MESSAGE *is* reachable through the action, contrary to
+      // an earlier comment here — review caught the mistaken premise. On a
+      // DESYNCED asset (status not ASSIGNED, yet an open assignment exists —
+      // the invariant no CHECK can enforce) the guard passes IN_STOCK ->
+      // ASSIGNED, the close branch is skipped because it keys on
+      // `current.status === ASSIGNED`, and the insert reaches the index.
+      //
+      // So the discriminator earns its keep operationally, not just as defence
+      // in depth, and this is the path that proves it end to end.
+      await signInAs(Role.ADMIN_IT);
+      const asset = await aStockedAsset();
+      const holder = await aPerson("Desync Holder");
+      const other = await aPerson("Desync Other");
+
+      // Manufacture the desync exactly as a stray write would: an open
+      // assignment with the asset left IN_STOCK.
+      await db.assignment.create({
+        data: { assetId: asset.id, personId: holder.id },
+      });
+
+      await expect(
+        assignAssetToPerson(
+          null,
+          formData({ assetId: asset.id, personId: other.id, notes: "" }),
+        ),
+      ).resolves.toMatchObject({
+        ok: false,
+        message: ALREADY_ASSIGNED_MESSAGE,
+      });
+    });
   });
 });

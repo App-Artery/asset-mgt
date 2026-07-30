@@ -27,6 +27,30 @@ ADR: `docs/adr/ADR-001-vercel-neon-stack.md` · Stories: `docs/intake/asset-mgt/
   audit insert happens in the same transaction as the mutation it records
   (`src/lib/user-admin.ts`, `src/lib/asset-admin.ts`). User deactivation is a
   flag (`deactivatedAt`), never a delete.
+- **`Assignment` is a state row, not an audit row** — the one bounded
+  exception to the rule above. Exactly two columns are mutable,
+  `returnedAt` and `conditionNotes`, set exactly once, by the return
+  path, on a row where `returnedAt IS NULL`. Every other column is
+  write-once at insert; `Assignment` rows are never deleted. The audit
+  anchor is the `ASSIGNED`/`RETURNED` `AssetEvent` pair. Enforcement is
+  application-level, not a constraint: the update is predicated on
+  `returnedAt IS NULL` with a `count === 1` assertion
+  (`src/lib/asset-admin.ts`). `AssetEvent` and `UserEvent` remain
+  append-only and this exception does not extend to them.
+- **No personal data in event tables.** The application never writes a
+  name, email or employee ref into `AssetEvent.notes` or any `UserEvent`
+  field, and no new code may. The person link is
+  `AssetEvent.assignmentId` → `Assignment.personId` — exactly one copy,
+  joinable. Those tables are never updated and never deleted, so a name
+  change or a DPA erasure request against a copied-in name is
+  unhonourable by construction.
+  **What the code cannot enforce:** `notes` is operator-typed free text,
+  rendered to all four roles including `STAFF_RO` — who are otherwise
+  shown no person data at all. Every form writing it carries a "never
+  personal data" hint (`EventNoteHint`); that is guidance, not a
+  guarantee, and it is the one place §`STAFF_RO`-sees-no-person-data can
+  be bypassed. **Any feature that indexes or searches `AssetEvent.notes`
+  must exclude it from `STAFF_RO` reach, or close this first** (AM-07).
 - **Nothing in this codebase is ever deleted.** `RETIRED` is an asset's delete
   (`db.asset.delete()` appears nowhere and must not); `deactivatedAt` is a
   user's; categories and sites are renamed, never removed. A delete would
@@ -37,6 +61,12 @@ ADR: `docs/adr/ADR-001-vercel-neon-stack.md` · Stories: `docs/intake/asset-mgt/
   (`SELECT … FOR UPDATE`) before reading the current status: without it two
   concurrent transitions both pass the guard and the history records a
   transition that never happened.
+- **Exactly one `AssetEvent` per action, never two.** The type is
+  `ASSIGNED` when the action opens an assignment, `RETURNED` when it
+  closes one, `STATUS_CHANGED` otherwise — so retiring an assigned
+  asset writes a single `RETURNED` event carrying
+  `fromStatus=ASSIGNED, toStatus=RETIRED`. **Status questions are
+  answered by querying `fromStatus`/`toStatus`, never by event type.**
 - **A tag is mandatory from delivery onwards**, enforced by the
   `Asset_tag_required_when_tracked` CHECK constraint (hand-written in the
   `am02_asset_lifecycle` migration — Prisma has no CHECK primitive, so preserve
@@ -53,6 +83,16 @@ ADR: `docs/adr/ADR-001-vercel-neon-stack.md` · Stories: `docs/intake/asset-mgt/
   outcomes; never add distinct error surfaces to that flow.
 - **`Person.employeeRef`, never a national ID** — no national-ID column may be
   added anywhere (brief §7.3, Kenya DPA note in `docs/DPA-TRANSFER-NOTE.md`).
+- **`STAFF_RO` sees no person data.** No current holder and no holder
+  history anywhere in the app, except that user's own
+  `/me/assignments` — the data is **not fetched** for that viewer, not
+  merely unrendered, so a later UI change cannot leak it. Person field
+  visibility lives in exactly one place, `personSelectFor(role)` in
+  `src/lib/person-visibility.ts`, which is the only place in the
+  codebase a `Person` select **carrying PII** may be written — that
+  module's docblock names the two benign exceptions and gives the exact
+  grep to audit with. Widening it requires a DPA note review
+  (`docs/DPA-TRANSFER-NOTE.md`).
 - **Real-DB tests:** integration tests run against real Postgres via
   `describe.skipIf(!process.env.TEST_DATABASE_URL)` (see
   `src/lib/db.integration.test.ts`); local Docker Postgres 17 / CI service
