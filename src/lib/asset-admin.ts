@@ -272,7 +272,7 @@ async function assertPersonAssignable(tx: Tx, personId: string): Promise<void> {
 }
 
 /**
- * Inserts an open Assignment. The caller MUST already hold the asset row lock.
+ * Inserts an open Assignment, taking the asset row lock itself.
  *
  * Exported as a tx-scoped primitive specifically so AM-04's import can create
  * an open assignment with a historical `checkedOutAt` WITHOUT passing through
@@ -280,11 +280,20 @@ async function assertPersonAssignable(tx: Tx, personId: string): Promise<void> {
  * `ASSIGNED` event dated today for a handover that happened two years ago.
  * That is AM-02's `INITIAL_ASSET_STATUSES` trap one story later; the seam
  * exists so AM-04 does not rebuild it.
+ *
+ * IT TAKES THE LOCK RATHER THAN DOCUMENTING THAT THE CALLER MUST (security
+ * review, AM-04-CF-A). `lockAsset` is private, so an external caller could not
+ * honour a "caller must hold the lock" contract without duplicating the raw
+ * SQL — and duplicating it is precisely how uniform lock ordering breaks. The
+ * lock is re-entrant within a transaction, so the core path below, which has
+ * already taken it, pays nothing for the second acquisition. The seam is now
+ * safe by construction instead of by comment.
  */
 export async function createOpenAssignmentTx(
   tx: Tx,
   input: { assetId: string; personId: string; checkedOutAt?: Date },
 ): Promise<string> {
+  await lockAsset(tx, input.assetId);
   const assignment = await tx.assignment.create({
     data: {
       assetId: input.assetId,
@@ -303,11 +312,22 @@ export async function createOpenAssignmentTx(
  * null when the asset was not actually held.
  *
  * The update is predicated on `returnedAt: null` and asserts it touched exactly
- * one row. The asset row lock already excludes the double-return race — this
- * predicate is what survives someone later deleting the lock, and it is what
- * keeps the `Assignment` mutability exception self-limiting: the two mutable
- * columns can only ever be written to a row that is still open. Application
- * enforced, not DB enforced.
+ * one row. That keeps the `Assignment` mutability exception self-limiting: the
+ * two mutable columns can only ever be written to a row that is still open.
+ * Application enforced, not DB enforced.
+ *
+ * WHAT THIS PREDICATE DOES NOT DO — and an earlier version of this comment
+ * wrongly claimed it did: it is NOT a second layer that survives deleting the
+ * asset row lock. Without the lock, the losing transaction's `findFirst` below
+ * sees the row already closed, returns null, and takes the "proceed" branch —
+ * the `count === 1` assertion is never reached, and a second transition commits
+ * against an already-returned asset. Verified: with `FOR UPDATE` removed, the
+ * concurrent-double-return test fails with two RETURNED events, not one.
+ *
+ * The lock is the only thing standing between this function and that bug. This
+ * predicate defends one narrow interleaving inside it (a close landing between
+ * the findFirst and the updateMany), which with the lock present cannot occur
+ * at all. Keep both; do not read this as defence in depth.
  *
  * A null return means `Asset.status` said ASSIGNED while no open assignment
  * existed — the invariant the DB cannot enforce (a CHECK cannot cross tables).

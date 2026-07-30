@@ -37,12 +37,20 @@ ADR: `docs/adr/ADR-001-vercel-neon-stack.md` · Stories: `docs/intake/asset-mgt/
   `returnedAt IS NULL` with a `count === 1` assertion
   (`src/lib/asset-admin.ts`). `AssetEvent` and `UserEvent` remain
   append-only and this exception does not extend to them.
-- **No personal data in event tables.** Names, emails and employee refs
-  are never written into `AssetEvent.notes` or any `UserEvent` field.
-  The person link is `AssetEvent.assignmentId` → `Assignment.personId`
-  — exactly one copy, joinable. Those tables are never updated and
-  never deleted, so a name change or a DPA erasure request against a
-  copied-in name is unhonourable by construction.
+- **No personal data in event tables.** The application never writes a
+  name, email or employee ref into `AssetEvent.notes` or any `UserEvent`
+  field, and no new code may. The person link is
+  `AssetEvent.assignmentId` → `Assignment.personId` — exactly one copy,
+  joinable. Those tables are never updated and never deleted, so a name
+  change or a DPA erasure request against a copied-in name is
+  unhonourable by construction.
+  **What the code cannot enforce:** `notes` is operator-typed free text,
+  rendered to all four roles including `STAFF_RO` — who are otherwise
+  shown no person data at all. Every form writing it carries a "never
+  personal data" hint (`EventNoteHint`); that is guidance, not a
+  guarantee, and it is the one place §`STAFF_RO`-sees-no-person-data can
+  be bypassed. **Any feature that indexes or searches `AssetEvent.notes`
+  must exclude it from `STAFF_RO` reach, or close this first** (AM-07).
 - **Nothing in this codebase is ever deleted.** `RETIRED` is an asset's delete
   (`db.asset.delete()` appears nowhere and must not); `deactivatedAt` is a
   user's; categories and sites are renamed, never removed. A delete would

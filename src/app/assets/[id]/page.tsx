@@ -290,14 +290,24 @@ export default async function AssetDetailPage({
           value={toDateInput(asset.warrantyUntil)}
         />
         {canSeeHolders ? (
-          <Field
-            label="Held by"
-            value={
-              holder
-                ? `${holder.person.name}${holder.person.employeeRef ? ` (${holder.person.employeeRef})` : ""}`
-                : null
-            }
-          />
+          <div>
+            <dt className="text-muted-foreground text-xs">Held by</dt>
+            <dd>
+              {holder ? (
+                <Link
+                  href={`/people/${holder.person.id}`}
+                  className="underline underline-offset-4"
+                >
+                  {holder.person.name}
+                  {holder.person.employeeRef
+                    ? ` (${holder.person.employeeRef})`
+                    : ""}
+                </Link>
+              ) : (
+                "—"
+              )}
+            </dd>
+          </div>
         ) : null}
       </dl>
 
@@ -363,7 +373,17 @@ export default async function AssetDetailPage({
               <TableBody>
                 {assignments.map((assignment) => (
                   <TableRow key={assignment.id}>
-                    <TableCell>{assignment.person.name}</TableCell>
+                    <TableCell>
+                      {/* The only route to /people/[id]. Rendered solely inside
+                          this canSeeHolders branch, so the link cannot appear
+                          for a viewer the route would reject anyway. */}
+                      <Link
+                        href={`/people/${assignment.person.id}`}
+                        className="underline underline-offset-4"
+                      >
+                        {assignment.person.name}
+                      </Link>
+                    </TableCell>
                     <TableCell>
                       {assignment.person.employeeRef ?? "—"}
                     </TableCell>

@@ -31,6 +31,29 @@ import {
  * a repair-bound return is that same action with toStatus=IN_REPAIR, never a
  * separate "send to repair" (AM-03 DESIGN §4.2).
  */
+/**
+ * The standing warning on every free-text field that lands in `AssetEvent.notes`.
+ *
+ * `notes` is the one PII channel the code cannot close: `CLAUDE.md` forbids the
+ * application from writing personal data into the append-only event tables, and
+ * it does not — but an operator can type a name into a text box, and that text
+ * is rendered to ALL FOUR roles including STAFF_RO, who are otherwise shown no
+ * person data at all (AM-03 DESIGN §2.1). `AssetEvent` is never updated and
+ * never deleted, so a name typed here cannot be corrected or erased.
+ *
+ * "Reason" on retirement is the field most likely to attract one ("stolen from
+ * X's car"), which is why the hint is on every one of them and not just assign.
+ */
+function EventNoteHint() {
+  return (
+    <p className="text-muted-foreground text-xs">
+      Never personal data: this lands in the permanent event log, is visible to
+      all staff, and cannot be edited or removed. Describe the asset, not a
+      person.
+    </p>
+  );
+}
+
 export type LifecycleMove =
   | "RECEIVE"
   | "ASSIGN"
@@ -137,6 +160,7 @@ function ReceiveForm({ assetId }: { assetId: string }) {
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="receive-notes">Notes</Label>
         <Input id="receive-notes" name="notes" disabled={pending} />
+        <EventNoteHint />
       </div>
       <Button type="submit" disabled={pending} className="w-fit">
         {pending ? "Receiving…" : "Receive and tag"}
@@ -188,6 +212,7 @@ function RepairForm({
       <div className="flex flex-col gap-1.5">
         <Label htmlFor={`${idPrefix}-notes`}>Notes</Label>
         <Input id={`${idPrefix}-notes`} name="notes" disabled={pending} />
+        <EventNoteHint />
       </div>
       <Button
         type="submit"
@@ -231,6 +256,7 @@ function RetireForm({ assetId, isHeld }: { assetId: string; isHeld: boolean }) {
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="retire-notes">Reason</Label>
         <Input id="retire-notes" name="notes" disabled={pending} />
+        <EventNoteHint />
       </div>
       <Button
         type="submit"

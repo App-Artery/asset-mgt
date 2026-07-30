@@ -134,9 +134,19 @@ Verbatim, for `CLAUDE.md`:
 
 The exception is made self-limiting by its enforcement: the update is **predicated on
 `returnedAt IS NULL`** — `updateMany({ where: { id, returnedAt: null } })` asserting
-`count === 1` and throwing otherwise. The Asset row lock (§4.1) already excludes the
-double-return race; this predicate is what survives someone later deleting the lock. It is
-application-enforced, not DB-enforced.
+`count === 1` and throwing otherwise. The two mutable columns can only ever be written to a
+row that is still open. Application-enforced, not DB-enforced.
+
+> **Correction (security review, F1).** An earlier draft of this section claimed the
+> predicate "is what survives someone later deleting the lock". **It does not, and the
+> claim was verified false.** Without the asset row lock, the losing transaction's
+> `findFirst` sees the row already closed, returns null, and takes the documented "proceed"
+> branch — `count === 1` is never reached, and a second transition commits against an
+> already-returned asset (with `FOR UPDATE` removed, the concurrent-double-return test fails
+> with two events, not one). The lock is the **only** thing preventing that. The predicate
+> defends one narrow interleaving inside the lock's window, which with the lock present
+> cannot occur at all. Both are kept; neither is defence in depth for the other. A false
+> safety claim in a comment is how the lock gets deleted two stories from now.
 
 ---
 
@@ -383,7 +393,31 @@ extends to both).
   carrying staff emails would contradict §5.2 and the DPA note.
 - **Into AM-07:** "role-filtered" search is load-bearing. **`STAFF_RO` must not be able to
   search by person name at all** — otherwise §2.1's redaction is bypassed in one query
-  ("search Jane → see Jane's laptop").
+  ("search Jane → see Jane's laptop"). **Sharpened by the security review:** if AM-07
+  indexes `AssetEvent.notes`, every operator-typed name in that column becomes findable by
+  `STAFF_RO` — a far sharper bypass than the name search, because the notes column is
+  append-only and cannot be corrected. Either exclude `notes` from any `STAFF_RO`-reachable
+  search, or close the F3 channel properly first.
+
+### Added by the security review on the diff (PASS WITH CONDITIONS)
+
+- **AM-04-CF-A — resolved in this PR, not deferred.** `createOpenAssignmentTx` now takes the
+  asset row lock itself. `lockAsset` is private, so an external caller could not have
+  honoured a "caller must hold the lock" contract without duplicating the raw SQL, which is
+  exactly how uniform lock ordering breaks. Re-entrant within a transaction, so the core path
+  pays nothing.
+- **AM-04-CF-B.** AM-04's write paths must be brought inside the **scoped** reconciliation
+  assertion (`src/lib/assignment.integration.test.ts`), or it silently narrows as the
+  codebase grows around it.
+- **AM-03-CF-3.** If a one-step reassign is ever built (close one assignment and open another
+  in a single transition), revisit `eventTypeFor`: with both an opened and a closed
+  assignment it returns `ASSIGNED` and keeps only the opened link, dropping the closed one.
+  Unreachable today — `ASSIGNED → ASSIGNED` fails the lifecycle guard first.
+- **F3, accepted residual risk.** `AssetEvent.notes` is operator-typed free text rendered to
+  all four roles including `STAFF_RO`, and the table is never updated or deleted. The code
+  never writes personal data there; an operator can. Mitigated by a hint on every form that
+  writes it and by the `CLAUDE.md` entry, both of which are guidance, not enforcement. This
+  is the one channel through which §2.1's redaction can be bypassed.
 
 ---
 
