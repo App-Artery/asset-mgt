@@ -1,6 +1,6 @@
 import "server-only";
 import { Prisma } from "@prisma/client";
-import { TagRequiredError } from "@/lib/asset-admin";
+import { PersonNotAssignableError, TagRequiredError } from "@/lib/asset-admin";
 import { IllegalTransitionError } from "@/lib/asset-lifecycle";
 
 /**
@@ -22,6 +22,12 @@ export const ILLEGAL_TRANSITION_MESSAGE =
   "That status change isn't allowed from this asset's current status.";
 export const INVALID_FIELDS_MESSAGE =
   "Check the form: category, make and model are required, and any price must be zero or more.";
+export const ALREADY_ASSIGNED_MESSAGE =
+  "That asset is already assigned to someone. Refresh and take it back first.";
+export const PERSON_NOT_ASSIGNABLE_MESSAGE =
+  "That person's account has been deactivated, so they cannot be given assets.";
+export const CONDITION_NOTES_REQUIRED_MESSAGE =
+  "Add a note describing the condition — required for repairs and for poor or defective kit.";
 
 /** The CHECK constraint the tag rule is enforced by (see the am02 migration). */
 const TAG_CONSTRAINT = "Asset_tag_required_when_tracked";
@@ -51,6 +57,30 @@ export function isTagConstraintViolation(error: unknown): boolean {
 }
 
 /**
+ * Whether a P2002 came from the `Asset.tag` unique index rather than AM-03's
+ * `Assignment_one_open_per_asset`.
+ *
+ * Prisma reports the offending index/field in `meta.target` — field names for
+ * schema-declared uniques, the DB constraint name for the hand-written partial
+ * index (which the Prisma schema cannot see). Only these two unique indexes
+ * exist on the asset write path, so "mentions tag" is a complete discriminator
+ * TODAY. Adding a third unique index means revisiting this function — pinned by
+ * a real-DB test asserting each message against a genuine Postgres error, not
+ * an assumed error shape.
+ */
+function isTagUniqueViolation(
+  error: Prisma.PrismaClientKnownRequestError,
+): boolean {
+  const target = error.meta?.target;
+  const parts = Array.isArray(target)
+    ? target.map(String)
+    : typeof target === "string"
+      ? [target]
+      : [];
+  return parts.some((part) => part.toLowerCase().includes("tag"));
+}
+
+/**
  * Returns the form message for a known write failure, or null when the caller
  * must rethrow. Never maps AuthorizationError — that must always fail loudly.
  */
@@ -59,7 +89,20 @@ export function mapAssetError(error: unknown): ActionFailure | null {
     error instanceof Prisma.PrismaClientKnownRequestError &&
     error.code === "P2002"
   ) {
-    return { ok: false, message: DUPLICATE_TAG_MESSAGE };
+    // P2002 is no longer synonymous with "duplicate tag": AM-03 added a second
+    // unique index (Assignment_one_open_per_asset). Reporting an assignment
+    // conflict as a tag collision would send the operator hunting for a tag
+    // that was never the issue — the same reasoning as the tag/assetId split in
+    // receiveAndTagAsset. Discriminate on the target before claiming a cause.
+    return {
+      ok: false,
+      message: isTagUniqueViolation(error)
+        ? DUPLICATE_TAG_MESSAGE
+        : ALREADY_ASSIGNED_MESSAGE,
+    };
+  }
+  if (error instanceof PersonNotAssignableError) {
+    return { ok: false, message: PERSON_NOT_ASSIGNABLE_MESSAGE };
   }
   if (error instanceof IllegalTransitionError) {
     return { ok: false, message: ILLEGAL_TRANSITION_MESSAGE };
