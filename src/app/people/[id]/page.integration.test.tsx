@@ -52,6 +52,7 @@ describe.skipIf(!testDatabaseUrl)("person view (real DB)", () => {
   let returnedTag: string;
   let leaverPersonId: string;
   let leaverDeactivatedAt: Date;
+  let leaverHeldTag: string;
 
   beforeAll(async () => {
     execSync("pnpm exec prisma migrate deploy", {
@@ -137,6 +138,31 @@ describe.skipIf(!testDatabaseUrl)("person view (real DB)", () => {
         role: Role.STAFF_RO,
         personId: leaver.id,
         deactivatedAt: leaverDeactivatedAt,
+      },
+    });
+
+    // The scenario condition 12 actually exists for: a leaver STILL HOLDING
+    // KIT. Review caught that the comment above claimed this and the fixture
+    // did not create it, so the marker was tested but the situation it exists
+    // to make visible — a deactivated person listed under "currently held" —
+    // never rendered. Deliberately left open: AM-03-CF-2 rules that neither
+    // blocking deactivation nor auto-returning is acceptable, so the register
+    // showing it is the whole mitigation.
+    const leaverAsset = await db.asset.create({
+      data: {
+        categoryId,
+        make: "Lenovo",
+        model: "ThinkPad X1",
+        tag: `PV-LEAVER-${randomUUID().slice(0, 8)}`,
+        status: AssetStatus.ASSIGNED,
+      },
+    });
+    leaverHeldTag = leaverAsset.tag!;
+    await db.assignment.create({
+      data: {
+        assetId: leaverAsset.id,
+        personId: leaver.id,
+        checkedOutAt: new Date("2026-05-15"),
       },
     });
   });
@@ -234,6 +260,24 @@ describe.skipIf(!testDatabaseUrl)("person view (real DB)", () => {
     const active = await fetchPersonView(Role.ADMIN_IT, personId);
     expect(active?.deactivatedAt).toBeNull();
     expect(await renderPerson(personId)).not.toContain("deactivated on");
+  });
+
+  it("still lists kit a leaver is holding, alongside the marker", async () => {
+    // The situation the marker exists FOR. AM-03-CF-2 rules that deactivation
+    // is never blocked on outstanding assets (that would break the AM-01
+    // kill-switch) and that nothing auto-returns them (that would fabricate a
+    // return). So this screen is the entire mitigation: if the open assignment
+    // stopped being listed here, a leaver's laptop would become invisible with
+    // no other detector.
+    const view = await fetchPersonView(Role.ADMIN_IT, leaverPersonId);
+    expect(view?.deactivatedAt).toEqual(leaverDeactivatedAt);
+    expect(view?.open).toHaveLength(1);
+    expect(view?.open[0]?.asset.tag).toBe(leaverHeldTag);
+
+    await signInAs(Role.ADMIN_IT);
+    const html = await renderPerson(leaverPersonId);
+    expect(html).toContain("deactivated on");
+    expect(html).toContain(leaverHeldTag);
   });
 
   it("404s an unknown person rather than throwing a 500", async () => {

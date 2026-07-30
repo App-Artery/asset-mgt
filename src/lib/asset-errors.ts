@@ -57,27 +57,46 @@ export function isTagConstraintViolation(error: unknown): boolean {
 }
 
 /**
- * Whether a P2002 came from the `Asset.tag` unique index rather than AM-03's
- * `Assignment_one_open_per_asset`.
+ * Which unique index a P2002 came from, or null when it is one we do not
+ * recognise and the caller must rethrow.
  *
- * Prisma reports the offending index/field in `meta.target` — field names for
- * schema-declared uniques, the DB constraint name for the hand-written partial
- * index (which the Prisma schema cannot see). Only these two unique indexes
- * exist on the asset write path, so "mentions tag" is a complete discriminator
- * TODAY. Adding a third unique index means revisiting this function — pinned by
- * a real-DB test asserting each message against a genuine Postgres error, not
- * an assumed error shape.
+ * Both indexes are matched POSITIVELY and anything else falls through to a
+ * rethrow. An earlier version asked only "does the target mention tag?" and
+ * treated every other P2002 as an assignment conflict — which is the exact
+ * mistake this file's N2 lesson is about, one level up: a confidently wrong
+ * sentence instead of a loud failure. Verified against real Postgres errors,
+ * `Person.email` collides as `{modelName:"Person", target:["email"]}`, so that
+ * default would have told an operator "that asset is already assigned to
+ * someone" when a duplicate person was the actual problem.
+ *
+ * Shapes confirmed against Prisma 6.19.3 + Postgres 17, not assumed:
+ *   tag         → { modelName: "Asset",      target: ["tag"] }
+ *   assignment  → { modelName: "Assignment", target: ["assetId"] }
  */
-function isTagUniqueViolation(
+type UniqueIndex = "tag" | "openAssignment";
+
+function uniqueIndexFor(
   error: Prisma.PrismaClientKnownRequestError,
-): boolean {
+): UniqueIndex | null {
   const target = error.meta?.target;
-  const parts = Array.isArray(target)
-    ? target.map(String)
-    : typeof target === "string"
-      ? [target]
-      : [];
-  return parts.some((part) => part.toLowerCase().includes("tag"));
+  const parts = (
+    Array.isArray(target)
+      ? target.map(String)
+      : typeof target === "string"
+        ? [target]
+        : []
+  ).map((part) => part.toLowerCase());
+  const model = String(
+    (error.meta as { modelName?: unknown } | undefined)?.modelName ?? "",
+  );
+
+  if (model === "Asset" && parts.includes("tag")) {
+    return "tag";
+  }
+  if (model === "Assignment" && parts.includes("assetid")) {
+    return "openAssignment";
+  }
+  return null;
 }
 
 /**
@@ -93,13 +112,17 @@ export function mapAssetError(error: unknown): ActionFailure | null {
     // unique index (Assignment_one_open_per_asset). Reporting an assignment
     // conflict as a tag collision would send the operator hunting for a tag
     // that was never the issue — the same reasoning as the tag/assetId split in
-    // receiveAndTagAsset. Discriminate on the target before claiming a cause.
-    return {
-      ok: false,
-      message: isTagUniqueViolation(error)
-        ? DUPLICATE_TAG_MESSAGE
-        : ALREADY_ASSIGNED_MESSAGE,
-    };
+    // receiveAndTagAsset. An UNRECOGNISED unique index falls through to null:
+    // the caller rethrows, and a new index announces itself as a real failure
+    // rather than as a plausible-sounding lie about one of the two we know.
+    switch (uniqueIndexFor(error)) {
+      case "tag":
+        return { ok: false, message: DUPLICATE_TAG_MESSAGE };
+      case "openAssignment":
+        return { ok: false, message: ALREADY_ASSIGNED_MESSAGE };
+      default:
+        return null;
+    }
   }
   if (error instanceof PersonNotAssignableError) {
     return { ok: false, message: PERSON_NOT_ASSIGNABLE_MESSAGE };

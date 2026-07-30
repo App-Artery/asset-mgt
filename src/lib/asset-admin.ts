@@ -34,6 +34,23 @@ export class TagRequiredError extends Error {
 type Tx = Prisma.TransactionClient;
 
 /**
+ * Test-only scheduling seams. Production callers must never pass these.
+ *
+ * Two distinct windows, because a guard's red-proof has to exercise ITS OWN
+ * window rather than a neighbouring one:
+ *  - `afterGuard` — after the lock and the transition guard, before any write.
+ *    Proves the asset row lock serialises concurrent transitions.
+ *  - `beforeCloseWrite` — inside closeOpenAssignmentTx, between reading the open
+ *    assignment and writing its closure. Proves the `returnedAt IS NULL` +
+ *    `count === 1` predicate, which the asset lock cannot cover because it locks
+ *    the ASSET row, not Assignment rows.
+ */
+type TransitionTestHooks = {
+  afterGuard?: () => Promise<void>;
+  beforeCloseWrite?: () => Promise<void>;
+};
+
+/**
  * The only statuses an asset may be created in. ON_ORDER is the procurement
  * path; IN_STOCK exists because not everything is ordered through the tool —
  * kit already on a shelf gets recorded where it actually is. Every other
@@ -324,10 +341,15 @@ export async function createOpenAssignmentTx(
  * against an already-returned asset. Verified: with `FOR UPDATE` removed, the
  * concurrent-double-return test fails with two RETURNED events, not one.
  *
- * The lock is the only thing standing between this function and that bug. This
- * predicate defends one narrow interleaving inside it (a close landing between
- * the findFirst and the updateMany), which with the lock present cannot occur
- * at all. Keep both; do not read this as defence in depth.
+ * WHAT IT DOES DEFEND, precisely: a writer that closes this assignment WITHOUT
+ * holding the asset row lock, landing between the findFirst and the updateMany.
+ * The lock is on the ASSET row — it does not lock Assignment rows, so raw SQL,
+ * a psql session, or any future path that writes Assignment directly is not
+ * excluded by it and can close a row out from under us. That is the window this
+ * predicate closes, and it is why deleting it is not free even though the lock
+ * is correct. `closeRace` below exists so that claim is falsifiable rather than
+ * asserted: the test drives exactly that interleaving and this throw is what
+ * catches it.
  *
  * A null return means `Asset.status` said ASSIGNED while no open assignment
  * existed — the invariant the DB cannot enforce (a CHECK cannot cross tables).
@@ -339,6 +361,7 @@ export async function createOpenAssignmentTx(
 async function closeOpenAssignmentTx(
   tx: Tx,
   input: { assetId: string; conditionNotes?: string | null },
+  testHooks?: TransitionTestHooks,
 ): Promise<string | null> {
   const open = await tx.assignment.findFirst({
     where: { assetId: input.assetId, returnedAt: null },
@@ -347,6 +370,10 @@ async function closeOpenAssignmentTx(
   if (!open) {
     return null;
   }
+  // Test-only seam, parked in the window the predicate defends — between the
+  // read and the write. Distinct from afterGuard, which sits outside this
+  // function and cannot reach here. Production callers never pass it.
+  await testHooks?.beforeCloseWrite?.();
   const { count } = await tx.assignment.updateMany({
     where: { id: open.id, returnedAt: null },
     data: {
@@ -380,6 +407,22 @@ function eventTypeFor(
   openedAssignmentId: string | null,
   closedAssignmentId: string | null,
 ): AssetEventType {
+  if (openedAssignmentId !== null && closedAssignmentId !== null) {
+    // Unreachable today ONLY because assertTransition rejects
+    // ASSIGNED -> ASSIGNED — a guarantee that lives in asset-lifecycle.ts, with
+    // nothing in the type system tying it to this function. Adding ASSIGNED to
+    // its own transition list (a plausible "reassign without returning first"
+    // request) would make this reachable, and the single-event rule would then
+    // silently LOSE information: the event would be typed ASSIGNED and carry
+    // only the opened assignment, dropping the closed custody period entirely.
+    //
+    // Failing loudly is the honest response. A one-step reassign needs a
+    // deliberate decision about how to represent two custody changes in one
+    // event, not a default that quietly discards one of them (AM-03-CF-3).
+    throw new Error(
+      "A single transition both opened and closed an assignment; one AssetEvent cannot represent both custody changes without losing one",
+    );
+  }
   if (openedAssignmentId !== null) return AssetEventType.ASSIGNED;
   if (closedAssignmentId !== null) return AssetEventType.RETURNED;
   return AssetEventType.STATUS_CHANGED;
@@ -422,7 +465,7 @@ async function transitionAssetStatusTx(
   // Test-only scheduling seam: the concurrency tests park one transaction
   // here — after the guard reads, before any write — so the second transaction
   // provably overlaps it. Production callers must never pass this.
-  testHooks?: { afterGuard?: () => Promise<void> },
+  testHooks?: TransitionTestHooks,
 ): Promise<Asset> {
   const current = await lockAsset(tx, input.assetId);
   assertTransition(current.status, input.toStatus);
@@ -449,10 +492,14 @@ async function transitionAssetStatusTx(
   // trains operators to record a fictional "returned to stock".
   const closedAssignmentId =
     current.status === AssetStatus.ASSIGNED
-      ? await closeOpenAssignmentTx(tx, {
-          assetId: input.assetId,
-          conditionNotes: input.conditionNotes,
-        })
+      ? await closeOpenAssignmentTx(
+          tx,
+          {
+            assetId: input.assetId,
+            conditionNotes: input.conditionNotes,
+          },
+          testHooks,
+        )
       : null;
 
   const openedAssignmentId =
@@ -499,7 +546,7 @@ export async function transitionAssetStatus(
     conditionNotes?: string | null;
     actorId: string;
   },
-  testHooks?: { afterGuard?: () => Promise<void> },
+  testHooks?: TransitionTestHooks,
 ): Promise<Asset> {
   return db.$transaction((tx) => transitionAssetStatusTx(tx, input, testHooks));
 }
@@ -522,7 +569,7 @@ export async function assignAsset(
     notes?: string | null;
     actorId: string;
   },
-  testHooks?: { afterGuard?: () => Promise<void> },
+  testHooks?: TransitionTestHooks,
 ): Promise<Asset> {
   return db.$transaction((tx) =>
     transitionAssetStatusTx(
@@ -560,7 +607,7 @@ export async function returnAsset(
     notes?: string | null;
     actorId: string;
   },
-  testHooks?: { afterGuard?: () => Promise<void> },
+  testHooks?: TransitionTestHooks,
 ): Promise<Asset> {
   return db.$transaction((tx) =>
     transitionAssetStatusTx(

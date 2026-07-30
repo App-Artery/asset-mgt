@@ -109,6 +109,11 @@ describe.skipIf(!testDatabaseUrl)("assignment and returns (real DB)", () => {
     return db.assignment.findMany({ where: { assetId, returnedAt: null } });
   }
 
+  /** Shorthand for the arrange step of tests whose subject is the return path. */
+  function assignAssetToPerson_(assetId: string, personId: string) {
+    return assignAsset(db, { assetId, personId, actorId });
+  }
+
   /**
    * Parks T1 inside the race window (after the guard reads, before any write)
    * and hands back a release. Without this the two transactions serialise on
@@ -446,6 +451,82 @@ describe.skipIf(!testDatabaseUrl)("assignment and returns (real DB)", () => {
       ).resolves.toBe(1);
     });
 
+    it("refuses to close an assignment a lock-bypassing writer already closed", async () => {
+      // THE RED-PROOF FOR THE `count === 1` PREDICATE, which the lock tests do
+      // NOT cover: review found that deleting the throw left the whole suite
+      // green, because every other test exercises the LOCK's window, not this
+      // one. A guard whose red-proof exercises a neighbouring window is not
+      // proven at all.
+      //
+      // The window is reachable precisely because the lock is on the ASSET row
+      // and this row is an ASSIGNMENT. A raw UPDATE takes no asset lock, so it
+      // is not excluded by it — that is what raw SQL, a psql session, or any
+      // future path writing Assignment directly looks like from in here.
+      //
+      // Delete the `count !== 1` throw and this goes red: the close silently
+      // becomes a no-op, the transition commits, and the register records a
+      // RETURNED event for a return this transaction never performed.
+      const asset = await stockedAsset();
+      const holder = await person("Bypass Victim");
+      await assignAssetToPerson_(asset.id, holder.id);
+      const open = await db.assignment.findFirstOrThrow({
+        where: { assetId: asset.id, returnedAt: null },
+        select: { id: true },
+      });
+
+      const returning = returnAsset(
+        db,
+        {
+          assetId: asset.id,
+          toStatus: AssetStatus.IN_STOCK,
+          condition: AssetCondition.GOOD,
+          conditionNotes: "the losing transaction's note",
+          actorId,
+        },
+        {
+          beforeCloseWrite: async () => {
+            // Not blocked by the asset row lock: different table.
+            await db.$executeRaw`
+              UPDATE "Assignment"
+              SET "returnedAt" = NOW(), "conditionNotes" = 'closed by a lock-bypassing writer'
+              WHERE "id" = ${open.id}
+            `;
+          },
+        },
+      );
+
+      await expect(returning).rejects.toThrow(/closed concurrently/i);
+
+      // The bypassing writer's record stands; the transaction that lost rolled
+      // back whole, so no RETURNED event was written for it.
+      const assignment = await db.assignment.findUniqueOrThrow({
+        where: { id: open.id },
+      });
+      expect(assignment.conditionNotes).toBe(
+        "closed by a lock-bypassing writer",
+      );
+      await expect(
+        db.assetEvent.count({
+          where: { assetId: asset.id, type: AssetEventType.RETURNED },
+        }),
+      ).resolves.toBe(0);
+
+      // This test has deliberately manufactured the desync the runbook exists
+      // for: the raw close committed, the transaction rolled back, so the asset
+      // still says ASSIGNED with no open assignment. Left alone it would fail
+      // this file's reconciliation assertion — correctly, since that assertion
+      // is exactly the detector for this state.
+      //
+      // Repaired the way the README prescribes: bring the STATUS back into line
+      // with the assignment, never by reopening a closure that genuinely
+      // happened. Doing it here rather than suppressing the detector keeps the
+      // reconciliation assertion honest for every other test in this file.
+      await db.asset.update({
+        where: { id: asset.id },
+        data: { status: AssetStatus.IN_STOCK },
+      });
+    });
+
     it("lets only one of two concurrent returns record the return", async () => {
       // A second return silently overwriting the first is audit corruption,
       // not a duplicate click: the first return's condition notes are the
@@ -605,9 +686,15 @@ describe.skipIf(!testDatabaseUrl)("assignment and returns (real DB)", () => {
 
     // Guard the premise: a scope that selected nothing would make both
     // assertions pass unconditionally (LEARNINGS §Testing, vacuous tests).
-    const scoped = await db.assignment.count({
-      where: { asset: { categoryId } },
-    });
-    expect(scoped).toBeGreaterThan(0);
+    // BOTH candidate sets need guarding, not just one — the first query ranges
+    // over ASSIGNED assets and the second over open assignments, so proving
+    // only that assignments exist leaves the first query unprotected against
+    // becoming empty.
+    await expect(
+      db.assignment.count({ where: { asset: { categoryId } } }),
+    ).resolves.toBeGreaterThan(0);
+    await expect(
+      db.asset.count({ where: { categoryId, status: AssetStatus.ASSIGNED } }),
+    ).resolves.toBeGreaterThan(0);
   });
 });

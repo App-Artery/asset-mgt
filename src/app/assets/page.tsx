@@ -4,7 +4,10 @@ import { z } from "zod";
 import { STATUS_LABELS } from "@/lib/asset-lifecycle";
 import { requireRole } from "@/lib/authz";
 import { getDb } from "@/lib/db";
-import { canViewAssignments, personSelectFor } from "@/lib/person-visibility";
+import {
+  PERSON_NAME_SELECT,
+  canViewAssignments,
+} from "@/lib/person-visibility";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
@@ -86,7 +89,12 @@ export default async function AssetsPage({
     canSeeHolders && assets.length > 0
       ? await db.assignment.findMany({
           where: { returnedAt: null, assetId: { in: assets.map((a) => a.id) } },
-          select: { assetId: true, person: { select: personSelectFor(role) } },
+          // The register shows a name and nothing else, so it fetches a name
+          // and nothing else. personSelectFor(ADMIN_IT) would pull an email
+          // into this payload that no cell renders — within the tier, so not a
+          // leak, but it spends the "data not fetched cannot leak" property for
+          // no benefit.
+          select: { assetId: true, person: { select: PERSON_NAME_SELECT } },
         })
       : [];
   // At most one open assignment per asset — the partial unique index is what

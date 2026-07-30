@@ -55,6 +55,25 @@ export function personSelectFor(role: Role) {
 }
 
 /**
+ * The narrowest person projection: enough to name and link a holder, nothing
+ * more. For surfaces that display only a name — the register's "Held by"
+ * column — where `personSelectFor` would fetch an email nothing renders.
+ *
+ * Role-independent by construction: it contains no field any role is denied, so
+ * there is nothing for a role check to decide. It lives HERE, beside
+ * `personSelectFor`, so the chokepoint remains the only module writing a
+ * `Person` select — a bespoke inline select at the call site would buy the same
+ * narrowing at the cost of the property that makes this auditable.
+ *
+ * Fetching less than a role is entitled to is always safe; the reverse is the
+ * leak. Prefer this wherever only the name is shown.
+ */
+export const PERSON_NAME_SELECT = {
+  id: true,
+  name: true,
+} satisfies Prisma.PersonSelect;
+
+/**
  * Whether this role may see ANY person's assignment data — current holder,
  * holder history, the person views.
  *

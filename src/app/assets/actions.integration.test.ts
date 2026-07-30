@@ -45,8 +45,10 @@ import {
   updateAsset,
 } from "@/app/assets/actions";
 import {
+  ALREADY_ASSIGNED_MESSAGE,
   CONDITION_NOTES_REQUIRED_MESSAGE,
   DUPLICATE_TAG_MESSAGE,
+  ILLEGAL_TRANSITION_MESSAGE,
   PERSON_NOT_ASSIGNABLE_MESSAGE,
 } from "@/lib/asset-errors";
 
@@ -636,10 +638,11 @@ describe.skipIf(!testDatabaseUrl)("asset actions (real DB)", () => {
         message: DUPLICATE_TAG_MESSAGE,
       });
 
-      // The assignment conflict travels a different route: the lifecycle guard
-      // rejects ASSIGNED -> ASSIGNED before the index is ever consulted, which
-      // is why ALREADY_ASSIGNED_MESSAGE is reachable through the transition
-      // mapper rather than through P2002 in normal operation.
+      // On a CONSISTENT asset the index is never consulted: the lifecycle guard
+      // rejects ASSIGNED -> ASSIGNED first. Assert the exact message, not
+      // "anything but the tag one" — the loose form passes with the
+      // discriminator deleted entirely (title/assertion agreement,
+      // LEARNINGS §Testing).
       const asset = await aStockedAsset();
       const first = await aPerson("First");
       const second = await aPerson("Second");
@@ -647,12 +650,47 @@ describe.skipIf(!testDatabaseUrl)("asset actions (real DB)", () => {
         null,
         formData({ assetId: asset.id, personId: first.id, notes: "" }),
       );
-      const conflict = await assignAssetToPerson(
-        null,
-        formData({ assetId: asset.id, personId: second.id, notes: "" }),
-      );
-      expect(conflict?.ok).toBe(false);
-      expect(conflict?.message).not.toBe(DUPLICATE_TAG_MESSAGE);
+      await expect(
+        assignAssetToPerson(
+          null,
+          formData({ assetId: asset.id, personId: second.id, notes: "" }),
+        ),
+      ).resolves.toMatchObject({
+        ok: false,
+        message: ILLEGAL_TRANSITION_MESSAGE,
+      });
+    });
+
+    it("reports a desynced asset's index collision as an assignment conflict", async () => {
+      // ALREADY_ASSIGNED_MESSAGE *is* reachable through the action, contrary to
+      // an earlier comment here — review caught the mistaken premise. On a
+      // DESYNCED asset (status not ASSIGNED, yet an open assignment exists —
+      // the invariant no CHECK can enforce) the guard passes IN_STOCK ->
+      // ASSIGNED, the close branch is skipped because it keys on
+      // `current.status === ASSIGNED`, and the insert reaches the index.
+      //
+      // So the discriminator earns its keep operationally, not just as defence
+      // in depth, and this is the path that proves it end to end.
+      await signInAs(Role.ADMIN_IT);
+      const asset = await aStockedAsset();
+      const holder = await aPerson("Desync Holder");
+      const other = await aPerson("Desync Other");
+
+      // Manufacture the desync exactly as a stray write would: an open
+      // assignment with the asset left IN_STOCK.
+      await db.assignment.create({
+        data: { assetId: asset.id, personId: holder.id },
+      });
+
+      await expect(
+        assignAssetToPerson(
+          null,
+          formData({ assetId: asset.id, personId: other.id, notes: "" }),
+        ),
+      ).resolves.toMatchObject({
+        ok: false,
+        message: ALREADY_ASSIGNED_MESSAGE,
+      });
     });
   });
 });

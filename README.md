@@ -138,6 +138,19 @@ projection of it. Reconcile by bringing the asset's status back into line, never
 by closing an assignment that was not actually returned: that would fabricate a
 return in the audit trail.
 
+Concretely, per row the queries return:
+
+- **First query** (asset says `ASSIGNED`, nobody holds it): the asset is not
+  actually held. Set its status to what it really is — normally `IN_STOCK`.
+- **Second query** (someone holds it, asset does not say `ASSIGNED`): **no
+  application path can fix this one.** The return path only closes an assignment
+  when the asset's current status is `ASSIGNED`, and `returnAsset` is rejected by
+  the lifecycle guard from any other status — so the app cannot close the
+  assignment and cannot be made to. Repair it in two steps: set the status back
+  to `ASSIGNED`, then perform a normal return through the app so the closure is
+  recorded with its `RETURNED` event and condition. Do **not** close the
+  assignment with raw SQL; that severs the audit trail the register exists for.
+
 Run it — and every other `psql` or Prisma command in this repo — against an
 **explicitly named database**. The gitignored `.env` holds the **production**
 `DATABASE_URL` and the Prisma CLI autoloads it, so a bare `pnpm db:migrate` or

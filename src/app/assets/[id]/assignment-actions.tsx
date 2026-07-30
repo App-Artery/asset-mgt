@@ -125,7 +125,13 @@ export function ReturnFromPersonForm({
     returnAssetFromPerson,
     null,
   );
-  const [toStatus, setToStatus] = useState<ReturnDestination>(destinations[0]);
+  // `?? "IN_STOCK"` rather than trusting destinations[0]: an empty array is
+  // unreachable today (this form only renders from ASSIGNED, which permits
+  // both) but indexing it is undefined at runtime and a type error the moment
+  // noUncheckedIndexedAccess is turned on. Back to stock is the safe default.
+  const [toStatus, setToStatus] = useState<ReturnDestination>(
+    destinations[0] ?? "IN_STOCK",
+  );
   const [condition, setCondition] = useState<ConditionOption>("GOOD");
   const notesRequired = conditionNotesRequiredFor(toStatus, condition);
 
