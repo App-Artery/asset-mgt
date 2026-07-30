@@ -423,6 +423,14 @@ async function runTransition(
       tag: options.tag,
       condition: options.condition,
       notes: options.notes,
+      // These AM-02 actions predate assignment, and on an ASSIGNED asset the
+      // write layer closes the open assignment for them. The UI never offers
+      // them there — but a STALE FORM does: an operator holding a detail page
+      // that still says IN_STOCK, on an asset someone else has since assigned,
+      // clicks "Send to repair" and closes a real assignment. Carrying the
+      // operator's note onto the closing record means that path documents
+      // itself instead of writing a silent null.
+      conditionNotes: options.notes,
       actorId,
     });
   } catch (error) {
@@ -430,6 +438,9 @@ async function runTransition(
     if (!failure) throw error;
     return failure;
   }
-  revalidateAsset(assetId);
+  // Cheap and correct on every path: these actions cannot know whether the
+  // write layer closed an assignment, and revalidating a person view that did
+  // not change costs nothing next to showing a stale holder.
+  revalidateAssignment(assetId);
   return { ok: true, message: options.successMessage };
 }

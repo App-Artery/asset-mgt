@@ -537,6 +537,58 @@ describe.skipIf(!testDatabaseUrl)("asset actions (real DB)", () => {
       ).resolves.toMatchObject({ ok: true });
     });
 
+    it("closes the assignment when a stale sendToRepair lands on an assigned asset", async () => {
+      // The reachable stale-form path: an operator holds a detail page that
+      // still says IN_STOCK, someone else assigns the asset, and the operator
+      // clicks "Send to repair". The UI never offers that move on an ASSIGNED
+      // asset, so this is the only way in — and it must still leave a coherent
+      // register: assignment closed, ONE event, and the operator's note carried
+      // onto the closing record rather than dropped.
+      await signInAs(Role.ADMIN_IT);
+      const asset = await aStockedAsset();
+      const holder = await aPerson("Stale Form Holder");
+      await assignAssetToPerson(
+        null,
+        formData({ assetId: asset.id, personId: holder.id, notes: "" }),
+      );
+
+      await expect(
+        sendToRepair(
+          null,
+          formData({
+            assetId: asset.id,
+            condition: "DEFECTIVE",
+            notes: "Screen cracked in transit",
+          }),
+        ),
+      ).resolves.toMatchObject({ ok: true });
+
+      const after = await db.asset.findUniqueOrThrow({
+        where: { id: asset.id },
+        include: {
+          events: { orderBy: [{ at: "asc" }, { id: "asc" }] },
+          assignments: true,
+        },
+      });
+      expect(after.status).toBe(AssetStatus.IN_REPAIR);
+      expect(after.assignments).toHaveLength(1);
+      expect(after.assignments[0]?.returnedAt).not.toBeNull();
+      expect(after.assignments[0]?.conditionNotes).toBe(
+        "Screen cracked in transit",
+      );
+      // One event, typed RETURNED because it closed an assignment — not a
+      // STATUS_CHANGED, and not two rows.
+      expect(after.events.map((event) => event.type)).toEqual([
+        AssetEventType.CREATED,
+        AssetEventType.ASSIGNED,
+        AssetEventType.RETURNED,
+      ]);
+      expect(after.events[2]).toMatchObject({
+        fromStatus: AssetStatus.ASSIGNED,
+        toStatus: AssetStatus.IN_REPAIR,
+      });
+    });
+
     it("refuses to assign to a deactivated person with a specific message", async () => {
       await signInAs(Role.ADMIN_IT);
       const asset = await aStockedAsset();
