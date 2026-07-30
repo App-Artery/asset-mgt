@@ -1,9 +1,16 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import type { AssetStatus } from "@prisma/client";
+import {
+  Role,
+  type AssetEventType,
+  type AssetStatus,
+  type Prisma,
+  type PrismaClient,
+} from "@prisma/client";
 import { ASSET_TRANSITIONS, STATUS_LABELS } from "@/lib/asset-lifecycle";
 import { requireRole } from "@/lib/authz";
 import { getDb } from "@/lib/db";
+import { canViewAssignments, personSelectFor } from "@/lib/person-visibility";
 import {
   Table,
   TableBody,
@@ -13,16 +20,20 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { AssetForm } from "../asset-form";
+import type { PickerPerson, ReturnDestination } from "./assignment-actions";
 import { LifecycleActions, type LifecycleMove } from "./lifecycle-actions";
 
 /**
  * The moves offered from a status, derived from the single transition map so
- * AM-03 can add assignment without a second source of truth.
+ * there is never a second source of truth about what is legal.
  *
- * ASSIGNED is deliberately never offered: it is in ASSET_TRANSITIONS (so the
- * lifecycle is complete) but assignment is AM-03's story. That also means
- * IN_STOCK is only offered where AM-02 owns the reason for it — receiving a
- * delivery or returning from repair, never returning from an assignment.
+ * The one place the map alone is not enough: out of ASSIGNED, IN_STOCK and
+ * IN_REPAIR are BOTH reached by taking the asset back from its holder. So
+ * ASSIGNED offers no "send to repair" button — a repair-bound return is the
+ * return action with toStatus=IN_REPAIR, which keeps closing the assignment and
+ * changing the status in one transaction and one event (AM-03 DESIGN §4.2).
+ * Retire stays available: the write layer closes the assignment itself, and
+ * stolen kit must be retirable without recording a fictional return.
  */
 function lifecycleMovesFor(status: AssetStatus): LifecycleMove[] {
   const allowed = ASSET_TRANSITIONS[status];
@@ -30,12 +41,37 @@ function lifecycleMovesFor(status: AssetStatus): LifecycleMove[] {
   if (status === "ON_ORDER" && allowed.includes("IN_STOCK")) {
     moves.push("RECEIVE");
   }
-  if (status === "IN_REPAIR" && allowed.includes("IN_STOCK")) {
-    moves.push("RETURN");
+  if (allowed.includes("ASSIGNED")) {
+    moves.push("ASSIGN");
   }
-  if (allowed.includes("IN_REPAIR")) moves.push("SEND_TO_REPAIR");
-  if (allowed.includes("RETIRED")) moves.push("RETIRE");
+  if (status === "ASSIGNED") {
+    if (allowed.includes("IN_STOCK") || allowed.includes("IN_REPAIR")) {
+      moves.push("RETURN_FROM_PERSON");
+    }
+  } else {
+    if (status === "IN_REPAIR" && allowed.includes("IN_STOCK")) {
+      moves.push("RETURN");
+    }
+    if (allowed.includes("IN_REPAIR")) {
+      moves.push("SEND_TO_REPAIR");
+    }
+  }
+  if (allowed.includes("RETIRED")) {
+    moves.push("RETIRE");
+  }
   return moves;
+}
+
+/** The return form's destination options, from the same transition map. */
+const RETURN_DESTINATIONS: readonly ReturnDestination[] = [
+  "IN_STOCK",
+  "IN_REPAIR",
+];
+
+function returnDestinationsFor(status: AssetStatus): ReturnDestination[] {
+  return RETURN_DESTINATIONS.filter((destination) =>
+    ASSET_TRANSITIONS[status].includes(destination),
+  );
 }
 
 /** <input type="date"> wants YYYY-MM-DD; dates are written at UTC midnight. */
@@ -53,6 +89,100 @@ function formatTimestamp(value: Date): string {
   return `${value.toISOString().slice(0, 16).replace("T", " ")} UTC`;
 }
 
+/**
+ * What the history's "Who" column shows when there is no name to show.
+ *
+ * `System` means the event genuinely has no actor (the seed script). `IT` is
+ * the neutral label for an actor this viewer may not be told about — either a
+ * STAFF_RO viewer, for whom the actor is not selected at all, or an actor whose
+ * account has no name and whose email this viewer's role does not include.
+ */
+const SYSTEM_ACTOR_LABEL = "System";
+const IT_ACTOR_LABEL = "IT";
+
+type HistoryRow = {
+  id: string;
+  at: Date;
+  type: AssetEventType;
+  fromStatus: AssetStatus | null;
+  toStatus: AssetStatus | null;
+  notes: string | null;
+  who: string;
+};
+
+const EVENT_FIELDS = {
+  id: true,
+  at: true,
+  type: true,
+  fromStatus: true,
+  toStatus: true,
+  notes: true,
+} as const;
+
+function whoLabel(actor: { name: string | null; email?: string } | null) {
+  if (actor === null) return SYSTEM_ACTOR_LABEL;
+  return actor.name ?? actor.email ?? IT_ACTOR_LABEL;
+}
+
+/**
+ * The status history, with actor identity tiered exactly as person data is
+ * (AM-03 DESIGN §5.3, advisor condition 11 — this closes a live leak on main,
+ * where `name ?? email` was rendered for all four roles and any actor without a
+ * name exposed their email address to every staff user).
+ *
+ * Three query branches rather than one query with `email: role === ADMIN_IT`:
+ * Prisma types a boolean-valued select field as PRESENT whatever the boolean
+ * turns out to be, so that shape reads as "email is always here" and only the
+ * runtime disagrees. Written out, the ONE branch selecting an email is the one
+ * guarded by an ADMIN_IT check, and review can see it without trusting a type.
+ *
+ * A STAFF_RO viewer still sees the whole history — they just see no person on
+ * it, because none is fetched.
+ */
+async function historyFor(
+  db: PrismaClient,
+  assetId: string,
+  role: Role,
+): Promise<HistoryRow[]> {
+  // Newest first. TIMESTAMP(3) can tie for events written milliseconds apart;
+  // cuid is monotonic, so it is the stable tie-breaker.
+  const query = {
+    where: { assetId },
+    orderBy: [{ at: "desc" }, { id: "desc" }],
+  } satisfies Prisma.AssetEventFindManyArgs;
+
+  if (!canViewAssignments(role)) {
+    const events = await db.assetEvent.findMany({
+      ...query,
+      select: EVENT_FIELDS,
+    });
+    return events.map((event) => ({ ...event, who: IT_ACTOR_LABEL }));
+  }
+
+  if (role === Role.ADMIN_IT) {
+    const events = await db.assetEvent.findMany({
+      ...query,
+      select: {
+        ...EVENT_FIELDS,
+        actor: { select: { name: true, email: true } },
+      },
+    });
+    return events.map(({ actor, ...event }) => ({
+      ...event,
+      who: whoLabel(actor),
+    }));
+  }
+
+  const events = await db.assetEvent.findMany({
+    ...query,
+    select: { ...EVENT_FIELDS, actor: { select: { name: true } } },
+  });
+  return events.map(({ actor, ...event }) => ({
+    ...event,
+    who: whoLabel(actor),
+  }));
+}
+
 export default async function AssetDetailPage({
   params,
 }: {
@@ -66,30 +196,64 @@ export default async function AssetDetailPage({
     "STAFF_RO",
   );
   const canWrite = role === "ADMIN_IT" || role === "PROCUREMENT";
+  // THE gate for every person-shaped read on this page (advisor condition 9).
+  // It is checked BEFORE each query, never in the JSX: a STAFF_RO viewer's page
+  // does not fetch the assignment or the person, so no later UI change can leak
+  // what was never loaded.
+  const canSeeHolders = canViewAssignments(role);
   const { id } = await params;
 
   const db = getDb();
   const asset = await db.asset.findUnique({
     where: { id },
-    include: {
-      category: true,
-      site: true,
-      events: {
-        // Newest first. TIMESTAMP(3) can tie for events written milliseconds
-        // apart; cuid is monotonic, so it is the stable tie-breaker.
-        orderBy: [{ at: "desc" }, { id: "desc" }],
-        include: { actor: { select: { name: true, email: true } } },
-      },
-    },
+    include: { category: true, site: true },
   });
   if (!asset) {
     notFound();
   }
 
-  const [categories, sites] = await Promise.all([
+  const moves = lifecycleMovesFor(asset.status);
+  const [history, categories, sites] = await Promise.all([
+    historyFor(db, asset.id, role),
     db.category.findMany({ orderBy: { name: "asc" } }),
     db.site.findMany({ orderBy: { name: "asc" } }),
   ]);
+
+  // Every holder this asset has ever had, newest first; the open one (at most
+  // one, by the partial unique index) is the current holder.
+  const assignments = canSeeHolders
+    ? await db.assignment.findMany({
+        where: { assetId: asset.id },
+        orderBy: [{ checkedOutAt: "desc" }, { id: "desc" }],
+        select: {
+          id: true,
+          checkedOutAt: true,
+          returnedAt: true,
+          conditionNotes: true,
+          person: { select: personSelectFor(role) },
+        },
+      })
+    : [];
+  const holder = assignments.find((row) => row.returnedAt === null) ?? null;
+
+  // Only fetched when the assign form will actually render — the picker is the
+  // one place this page loads people who have nothing to do with this asset.
+  const people: PickerPerson[] =
+    canWrite && moves.includes("ASSIGN")
+      ? (
+          await db.person.findMany({
+            orderBy: { name: "asc" },
+            select: personSelectFor(role),
+          })
+        ).map((person) => ({
+          id: person.id,
+          name: person.name,
+          // Email is deliberately dropped rather than passed and unused: the
+          // picker disambiguates by employeeRef, and nothing that crosses to
+          // the client needs an address.
+          employeeRef: person.employeeRef,
+        }))
+      : [];
 
   // Prisma's Decimal is not serialisable across the server/client boundary —
   // convert before it reaches any client component.
@@ -125,6 +289,16 @@ export default async function AssetDetailPage({
           label="Warranty until"
           value={toDateInput(asset.warrantyUntil)}
         />
+        {canSeeHolders ? (
+          <Field
+            label="Held by"
+            value={
+              holder
+                ? `${holder.person.name}${holder.person.employeeRef ? ` (${holder.person.employeeRef})` : ""}`
+                : null
+            }
+          />
+        ) : null}
       </dl>
 
       {canWrite ? (
@@ -135,7 +309,9 @@ export default async function AssetDetailPage({
             <h2 className="text-lg font-medium">Lifecycle</h2>
             <LifecycleActions
               assetId={asset.id}
-              moves={lifecycleMovesFor(asset.status)}
+              moves={moves}
+              people={people}
+              returnDestinations={returnDestinationsFor(asset.status)}
             />
           </section>
           <section className="flex flex-col gap-4">
@@ -166,6 +342,50 @@ export default async function AssetDetailPage({
         </>
       ) : null}
 
+      {canSeeHolders ? (
+        <section className="flex flex-col gap-4">
+          <h2 className="text-lg font-medium">Holders</h2>
+          {assignments.length === 0 ? (
+            <p className="text-muted-foreground text-sm">
+              This asset has never been assigned.
+            </p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Person</TableHead>
+                  <TableHead>Employee ref</TableHead>
+                  <TableHead>Checked out</TableHead>
+                  <TableHead>Returned</TableHead>
+                  <TableHead>Condition note</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {assignments.map((assignment) => (
+                  <TableRow key={assignment.id}>
+                    <TableCell>{assignment.person.name}</TableCell>
+                    <TableCell>
+                      {assignment.person.employeeRef ?? "—"}
+                    </TableCell>
+                    <TableCell>
+                      {formatTimestamp(assignment.checkedOutAt)}
+                    </TableCell>
+                    <TableCell>
+                      {assignment.returnedAt
+                        ? formatTimestamp(assignment.returnedAt)
+                        : "Still held"}
+                    </TableCell>
+                    <TableCell className="whitespace-normal">
+                      {assignment.conditionNotes ?? "—"}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </section>
+      ) : null}
+
       <section className="flex flex-col gap-4">
         <h2 className="text-lg font-medium">History</h2>
         <Table>
@@ -179,7 +399,7 @@ export default async function AssetDetailPage({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {asset.events.map((event) => (
+            {history.map((event) => (
               <TableRow key={event.id}>
                 <TableCell>{formatTimestamp(event.at)}</TableCell>
                 <TableCell>{event.type}</TableCell>
@@ -188,9 +408,7 @@ export default async function AssetDetailPage({
                     ? `${statusLabel(event.fromStatus)} → ${statusLabel(event.toStatus)}`
                     : "—"}
                 </TableCell>
-                <TableCell>
-                  {event.actor?.name ?? event.actor?.email ?? "System"}
-                </TableCell>
+                <TableCell>{event.who}</TableCell>
                 <TableCell className="whitespace-normal">
                   {event.notes ?? "—"}
                 </TableCell>
