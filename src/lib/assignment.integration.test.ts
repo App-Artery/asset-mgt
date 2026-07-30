@@ -567,10 +567,26 @@ describe.skipIf(!testDatabaseUrl)("assignment and returns (real DB)", () => {
 
   it("reconciles status against open assignments in both directions", async () => {
     // The invariant SQL cannot enforce (a CHECK cannot cross tables). This is
-    // the detection mechanism, and it is also the README runbook query.
+    // the detection mechanism, and the README runbook carries the same query
+    // unscoped for operational use.
+    //
+    // SCOPED TO THIS FILE'S CATEGORY, deliberately. The runbook query is global
+    // because production has one consistent register; this test database does
+    // not. It is shared (fileParallelism: false, no truncation between files),
+    // and asset-errors.integration.test.ts creates an Assignment directly
+    // WITHOUT a status change — it has to, because provoking a real unique-index
+    // violation is the only way to pin the P2002 discriminator. That row is a
+    // deliberately stranded open assignment, and a global assertion here reads
+    // it as a failure of code that never touched it.
+    //
+    // Scoping keeps the assertion about what THIS file's operations leave
+    // behind. It is still meaningful: every path exercised above — assign,
+    // return, repair-bound return, retire-while-assigned, and all four
+    // concurrency races — runs against assets in this category.
     const strandedAssigned = await db.$queryRaw<{ id: string }[]>`
       SELECT a."id" FROM "Asset" a
-      WHERE a."status" = 'ASSIGNED'
+      WHERE a."categoryId" = ${categoryId}
+        AND a."status" = 'ASSIGNED'
         AND NOT EXISTS (
           SELECT 1 FROM "Assignment" x
           WHERE x."assetId" = a."id" AND x."returnedAt" IS NULL
@@ -581,8 +597,17 @@ describe.skipIf(!testDatabaseUrl)("assignment and returns (real DB)", () => {
     const strandedOpen = await db.$queryRaw<{ id: string }[]>`
       SELECT x."id" FROM "Assignment" x
       JOIN "Asset" a ON a."id" = x."assetId"
-      WHERE x."returnedAt" IS NULL AND a."status" <> 'ASSIGNED'
+      WHERE a."categoryId" = ${categoryId}
+        AND x."returnedAt" IS NULL
+        AND a."status" <> 'ASSIGNED'
     `;
     expect(strandedOpen).toEqual([]);
+
+    // Guard the premise: a scope that selected nothing would make both
+    // assertions pass unconditionally (LEARNINGS §Testing, vacuous tests).
+    const scoped = await db.assignment.count({
+      where: { asset: { categoryId } },
+    });
+    expect(scoped).toBeGreaterThan(0);
   });
 });
