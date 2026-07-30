@@ -110,6 +110,44 @@ record — keep all three current when anything here changes.
    data-controller registration is the client's obligation via its own
    counsel — flag at handover.
 
+## Runbook — data integrity
+
+`Asset.status = 'ASSIGNED'` and the existence of an open `Assignment` row
+(`returnedAt IS NULL`) are two halves of one invariant, maintained
+transactionally in `src/lib/asset-admin.ts`. It **cannot** be enforced in SQL —
+a CHECK constraint cannot reference another table — so direct SQL, or a future
+write path that bypasses that module, can desynchronise them. Detection is by
+reconciliation query; both halves must return zero rows.
+
+```sql
+-- Assets marked ASSIGNED with no open assignment
+SELECT a."id", a."tag" FROM "Asset" a
+WHERE a."status" = 'ASSIGNED'
+  AND NOT EXISTS (SELECT 1 FROM "Assignment" x
+                  WHERE x."assetId" = a."id" AND x."returnedAt" IS NULL);
+
+-- Open assignments whose asset is not ASSIGNED
+SELECT x."id", x."assetId" FROM "Assignment" x
+JOIN "Asset" a ON a."id" = x."assetId"
+WHERE x."returnedAt" IS NULL AND a."status" <> 'ASSIGNED';
+```
+
+When the two disagree, **the open `Assignment` row is the source of truth for
+holdership** — `Asset.status = 'ASSIGNED'` is a transactionally-maintained
+projection of it. Reconcile by bringing the asset's status back into line, never
+by closing an assignment that was not actually returned: that would fabricate a
+return in the audit trail.
+
+Run it — and every other `psql` or Prisma command in this repo — against an
+**explicitly named database**. The gitignored `.env` holds the **production**
+`DATABASE_URL` and the Prisma CLI autoloads it, so a bare `pnpm db:migrate` or
+`prisma studio` can silently hit production ([AM-01 retro](docs/retros/am-01.md),
+item 5); `psql` has no such default, so pass the connection string every time:
+
+```sh
+psql "$TARGET_DATABASE_URL" -f reconcile.sql   # never a bare psql / prisma
+```
+
 ## Intake artefacts
 
 | Document                                                    | Purpose                                                                      |
