@@ -1,6 +1,10 @@
 import "server-only";
 import { Prisma } from "@prisma/client";
-import { PersonNotAssignableError, TagRequiredError } from "@/lib/asset-admin";
+import {
+  ConditionNotesRequiredError,
+  PersonNotAssignableError,
+  TagRequiredError,
+} from "@/lib/asset-admin";
 import { IllegalTransitionError } from "@/lib/asset-lifecycle";
 
 /**
@@ -126,6 +130,9 @@ export function mapAssetError(error: unknown): ActionFailure | null {
   }
   if (error instanceof PersonNotAssignableError) {
     return { ok: false, message: PERSON_NOT_ASSIGNABLE_MESSAGE };
+  }
+  if (error instanceof ConditionNotesRequiredError) {
+    return { ok: false, message: CONDITION_NOTES_REQUIRED_MESSAGE };
   }
   if (error instanceof IllegalTransitionError) {
     return { ok: false, message: ILLEGAL_TRANSITION_MESSAGE };

@@ -591,6 +591,68 @@ describe.skipIf(!testDatabaseUrl)("asset actions (real DB)", () => {
       });
     });
 
+    it("refuses a stale sendToRepair that would close an assignment with no note", async () => {
+      // Copilot review. The stale-form path closes a real assignment, and
+      // `sendToRepair`'s schema cannot require a note — from IN_STOCK there is
+      // no assignment to describe. So the same repair-bound closure carried a
+      // note through returnAssetFromPerson and a silent null through here.
+      //
+      // The rule now lives in the write layer against the LOCKED status, which
+      // is the only place that knows an assignment is actually being closed.
+      await signInAs(Role.ADMIN_IT);
+      const asset = await aStockedAsset();
+      const holder = await aPerson("Noteless Repair");
+      await assignAssetToPerson(
+        null,
+        formData({ assetId: asset.id, personId: holder.id, notes: "" }),
+      );
+
+      await expect(
+        sendToRepair(
+          null,
+          formData({ assetId: asset.id, condition: "DEFECTIVE", notes: "  " }),
+        ),
+      ).resolves.toMatchObject({
+        ok: false,
+        message: CONDITION_NOTES_REQUIRED_MESSAGE,
+      });
+
+      // Rejected inside the transaction: the asset is untouched and still held.
+      const untouched = await db.asset.findUniqueOrThrow({
+        where: { id: asset.id },
+        include: { assignments: true },
+      });
+      expect(untouched.status).toBe(AssetStatus.ASSIGNED);
+      expect(untouched.assignments[0]?.returnedAt).toBeNull();
+
+      // The same move succeeds once the note is supplied.
+      await expect(
+        sendToRepair(
+          null,
+          formData({
+            assetId: asset.id,
+            condition: "DEFECTIVE",
+            notes: "Keyboard flooded",
+          }),
+        ),
+      ).resolves.toMatchObject({ ok: true });
+    });
+
+    it("still sends an unassigned asset to repair without a note", async () => {
+      // The other half: the note is required only where an assignment is being
+      // closed. Without this, the guard could tighten to "always required" and
+      // break the ordinary IN_STOCK -> IN_REPAIR path with nothing failing.
+      await signInAs(Role.ADMIN_IT);
+      const asset = await aStockedAsset();
+
+      await expect(
+        sendToRepair(
+          null,
+          formData({ assetId: asset.id, condition: "DEFECTIVE", notes: "" }),
+        ),
+      ).resolves.toMatchObject({ ok: true });
+    });
+
     it("refuses to assign to a deactivated person with a specific message", async () => {
       await signInAs(Role.ADMIN_IT);
       const asset = await aStockedAsset();

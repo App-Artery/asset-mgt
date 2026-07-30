@@ -385,6 +385,10 @@ describe.skipIf(!testDatabaseUrl)("assignment and returns (real DB)", () => {
         assetId: asset.id,
         toStatus: AssetStatus.IN_REPAIR,
         condition: AssetCondition.DEFECTIVE,
+        // Required once this lands on an ASSIGNED asset, which is the entire
+        // point of the race: T2 starts believing the asset is IN_STOCK (where
+        // no note is needed) and commits against ASSIGNED.
+        conditionNotes: "Sent to repair mid-race",
         actorId,
       });
       await letT2Race();

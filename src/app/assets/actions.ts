@@ -427,9 +427,13 @@ async function runTransition(
       // write layer closes the open assignment for them. The UI never offers
       // them there — but a STALE FORM does: an operator holding a detail page
       // that still says IN_STOCK, on an asset someone else has since assigned,
-      // clicks "Send to repair" and closes a real assignment. Carrying the
-      // operator's note onto the closing record means that path documents
-      // itself instead of writing a silent null.
+      // clicks "Send to repair" and closes a real assignment.
+      //
+      // This carries whatever note they gave onto the closing record. It does
+      // NOT guarantee one — `notes` is optional in both schemas, because from
+      // IN_STOCK there is no assignment to describe. The guarantee for the
+      // repair-bound case lives in transitionAssetStatusTx, which knows the
+      // locked status and rejects that closure without a note.
       conditionNotes: options.notes,
       actorId,
     });

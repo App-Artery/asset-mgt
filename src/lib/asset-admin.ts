@@ -247,6 +247,27 @@ export const RETURN_STATUSES = [
 ] as const;
 export type ReturnStatus = (typeof RETURN_STATUSES)[number];
 
+/**
+ * Rejection of a repair-bound return carrying no condition note.
+ *
+ * DESIGN §4.4 requires prose on a return that sends kit to repair — "say what
+ * is wrong with it" is the whole point of routing it there. `returnAssetFromPerson`
+ * enforces that at its Zod boundary, but `sendToRepair` cannot: its `notes`
+ * field is optional, because from IN_STOCK there is no assignment to close and
+ * nothing to describe.
+ *
+ * So the rule lives HERE, where the locked, authoritative status says whether
+ * an assignment is actually being closed. Enforcing it at the action boundary
+ * would mean reading the status before the transaction — a TOCTOU read that
+ * could disagree with the row the transition then locks.
+ */
+export class ConditionNotesRequiredError extends Error {
+  constructor() {
+    super("A repair-bound return must carry a condition note");
+    this.name = "ConditionNotesRequiredError";
+  }
+}
+
 /** Rejection of an assignment to a person whose linked account is deactivated. */
 export class PersonNotAssignableError extends Error {
   readonly personId: string;
@@ -482,6 +503,19 @@ async function transitionAssetStatusTx(
   }
   if (input.assignToPersonId !== undefined) {
     await assertPersonAssignable(tx, input.assignToPersonId);
+  }
+  // A repair-bound return must say what is wrong with the kit (DESIGN §4.4).
+  // Checked against the LOCKED status, so it holds for every caller — including
+  // sendToRepair arriving from a stale form, whose own schema cannot require a
+  // note because from IN_STOCK there is no assignment to describe. Without
+  // this, the same repair-bound closure carries a note through one action and a
+  // silent null through the other.
+  if (
+    current.status === AssetStatus.ASSIGNED &&
+    input.toStatus === AssetStatus.IN_REPAIR &&
+    (input.conditionNotes ?? "").trim() === ""
+  ) {
+    throw new ConditionNotesRequiredError();
   }
   await testHooks?.afterGuard?.();
 
