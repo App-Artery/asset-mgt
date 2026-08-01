@@ -62,6 +62,7 @@ describe("requestSignIn uniformity", () => {
     expect(mockSignIn).toHaveBeenLastCalledWith("resend", {
       email: "mixed.case@example.com",
       redirect: false,
+      redirectTo: "/",
     });
   });
 
@@ -114,5 +115,23 @@ describe("requestSignIn uniformity", () => {
 
     expect(rejected).toEqual({ sent: true });
     expect(consoleSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("magic-link redirect target", () => {
+  it("sends an explicit redirectTo so the link cannot point back at /signin", async () => {
+    // Without redirectTo, Auth.js falls back to the Referer header
+    // (next-auth/lib/actions.js: `redirectTo?.toString() ?? headers.get("Referer")`).
+    // The Referer of this action is the page the form sits on — which, for
+    // anyone the middleware bounced, is /signin?callbackUrl=… — so the magic
+    // link redirects the verified user straight back to the sign-in form.
+    mockSignIn.mockResolvedValueOnce("ok");
+
+    await requestSignIn({ sent: false }, formDataWith("known@example.com"));
+
+    expect(mockSignIn).toHaveBeenLastCalledWith(
+      "resend",
+      expect.objectContaining({ redirectTo: "/" }),
+    );
   });
 });

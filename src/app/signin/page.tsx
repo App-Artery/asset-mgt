@@ -1,3 +1,6 @@
+import { redirect } from "next/navigation";
+import { auth } from "@/auth";
+import { getDb } from "@/lib/db";
 import { requestSignIn } from "./actions";
 import { SENT_MESSAGE, SignInForm } from "./sign-in-form";
 
@@ -6,6 +9,9 @@ import { SENT_MESSAGE, SignInForm } from "./sign-in-form";
  * here too: verifyRequest → ?sent=1, every error → ?error=… — the error copy
  * stays generic (one line for all error codes) because the default Auth.js
  * pages are an enumeration oracle and distinct copy would reopen it.
+ *
+ * Because the page sits outside the matcher, nothing upstream bounces an
+ * already-authenticated visitor — so it self-guards below.
  */
 export default async function SignInPage({
   searchParams,
@@ -13,6 +19,23 @@ export default async function SignInPage({
   searchParams: Promise<{ sent?: string; error?: string }>;
 }) {
   const { sent, error } = await searchParams;
+
+  // Deliberately NOT a bare session check: src/app/page.tsx redirects a
+  // deactivated user holding a still-valid JWT here, so `session → redirect("/")`
+  // would ping-pong that user until the browser gives up — locking out exactly
+  // the leavers the kill-switch targets. Status is DB-read for the same reason
+  // requireRole reads it, and only when a session exists: the anonymous path
+  // (the one exposed to unauthenticated traffic) touches no database.
+  const session = await auth();
+  if (session?.user?.id) {
+    const user = await getDb().user.findUnique({
+      where: { id: session.user.id },
+      select: { deactivatedAt: true },
+    });
+    if (user && user.deactivatedAt === null) {
+      redirect("/");
+    }
+  }
 
   return (
     <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center gap-6 p-8">
