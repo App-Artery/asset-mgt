@@ -197,7 +197,12 @@ describe.skipIf(!testDatabaseUrl)("asset assignment UI (real DB)", () => {
       // The page still works: the asset and its status history render, with a
       // neutral label where a person would otherwise appear.
       expect(html).toContain(assignedTag);
-      expect(html).toContain("ASSIGNED");
+      // The history's own Change cell, not the bare status label: "Assigned"
+      // alone also appears in the Status field above, so asserting on it would
+      // still pass if the history table vanished entirely. The arrow string is
+      // rendered nowhere else. (AM-09 relabelled the event type from the raw
+      // `ASSIGNED` this used to assert on.)
+      expect(html).toContain("In stock → Assigned");
       expect(html).toContain(">IT<");
       expect(html).not.toContain(personName);
     });
@@ -254,8 +259,10 @@ describe.skipIf(!testDatabaseUrl)("asset assignment UI (real DB)", () => {
       for (const role of [Role.PROCUREMENT, Role.FINANCE]) {
         await signInAs(role);
         const view = await renderDetail(assignedAssetId);
-        // The history is still there — it just names no one.
-        expect(view.html).toContain("ASSIGNED");
+        // The history is still there — it just names no one. Asserted via the
+        // Change cell for the same reason as the STAFF_RO case above: the bare
+        // label is not unique to the history table.
+        expect(view.html).toContain("In stock → Assigned");
         expect(view.payload).not.toContain(actorEmail);
         expect(view.html).not.toContain(actorEmail);
       }

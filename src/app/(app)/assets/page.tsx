@@ -3,6 +3,7 @@ import { AssetStatus, type Prisma } from "@prisma/client";
 import { Plus } from "lucide-react";
 import { z } from "zod";
 import { STATUS_LABELS } from "@/lib/asset-lifecycle";
+import { CONDITION_LABELS } from "@/lib/labels";
 import { requireRole } from "@/lib/authz";
 import { getDb } from "@/lib/db";
 import {
@@ -284,7 +285,9 @@ export default async function AssetsPage({
                       </TableCell>
                     ) : null}
                     <TableCell>{row.siteName ?? "—"}</TableCell>
-                    <TableCell>{row.condition ?? "—"}</TableCell>
+                    <TableCell>
+                      {row.condition ? CONDITION_LABELS[row.condition] : "—"}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

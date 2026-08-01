@@ -12,7 +12,7 @@ import {
   sendToRepair,
   type AssetActionState,
 } from "../actions";
-import { CONDITION_OPTIONS } from "../asset-form";
+import { CONDITION_LABELS, CONDITION_ORDER } from "@/lib/labels";
 import { ActionMessage } from "./action-message";
 import {
   AssignForm,
@@ -150,9 +150,9 @@ function ReceiveForm({ assetId }: { assetId: string }) {
           disabled={pending}
         >
           <option value="">Not recorded</option>
-          {CONDITION_OPTIONS.map((condition) => (
+          {CONDITION_ORDER.map((condition) => (
             <option key={condition} value={condition}>
-              {condition}
+              {CONDITION_LABELS[condition]}
             </option>
           ))}
         </Select>
@@ -202,9 +202,9 @@ function RepairForm({
           disabled={pending}
         >
           <option value="">Leave unchanged</option>
-          {CONDITION_OPTIONS.map((condition) => (
+          {CONDITION_ORDER.map((condition) => (
             <option key={condition} value={condition}>
-              {condition}
+              {CONDITION_LABELS[condition]}
             </option>
           ))}
         </Select>

@@ -9,6 +9,7 @@ import {
 } from "@prisma/client";
 import { ASSET_TRANSITIONS, STATUS_LABELS } from "@/lib/asset-lifecycle";
 import { requireRole } from "@/lib/authz";
+import { CONDITION_LABELS, EVENT_TYPE_LABELS } from "@/lib/labels";
 import { getDb } from "@/lib/db";
 import { canViewAssignments, personSelectFor } from "@/lib/person-visibility";
 import {
@@ -271,7 +272,10 @@ export default async function AssetDetailPage({
         <Field label="Category" value={asset.category.name} />
         <Field label="Serial" value={asset.serial} />
         <Field label="Site" value={asset.site?.name ?? null} />
-        <Field label="Condition" value={asset.condition} />
+        <Field
+          label="Condition"
+          value={asset.condition ? CONDITION_LABELS[asset.condition] : null}
+        />
         <Field label="Supplier" value={asset.supplier} />
         <Field label="Purchased" value={toDateInput(asset.purchasedAt)} />
         <Field label="Purchase price" value={purchasePrice} />
@@ -412,7 +416,7 @@ export default async function AssetDetailPage({
             {history.map((event) => (
               <TableRow key={event.id}>
                 <TableCell>{formatTimestamp(event.at)}</TableCell>
-                <TableCell>{event.type}</TableCell>
+                <TableCell>{EVENT_TYPE_LABELS[event.type]}</TableCell>
                 <TableCell>
                   {event.fromStatus || event.toStatus
                     ? `${statusLabel(event.fromStatus)} → ${statusLabel(event.toStatus)}`

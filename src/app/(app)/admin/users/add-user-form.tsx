@@ -5,17 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
+import { ROLE_LABELS, ROLE_ORDER } from "@/lib/labels";
 import { createUser } from "./actions";
 
-// The four PRD roles, hardcoded rather than imported from @prisma/client so
-// no Prisma runtime reaches the client bundle. The server action re-validates
-// against the real enum regardless.
-export const ROLE_OPTIONS = [
-  "STAFF_RO",
-  "PROCUREMENT",
-  "FINANCE",
-  "ADMIN_IT",
-] as const;
+// ROLE_ORDER comes from @/lib/labels, whose only Prisma import is a TYPE — so
+// no Prisma runtime reaches the client bundle, exactly as before. What changed
+// is that the four roles are no longer a second, unchecked copy of the enum
+// (AM-09 DESIGN §4.1). The server action re-validates regardless.
 
 export function AddUserForm() {
   const [state, formAction, pending] = useActionState(createUser, null);
@@ -49,9 +45,9 @@ export function AddUserForm() {
           defaultValue="STAFF_RO"
           disabled={pending}
         >
-          {ROLE_OPTIONS.map((role) => (
+          {ROLE_ORDER.map((role) => (
             <option key={role} value={role}>
-              {role}
+              {ROLE_LABELS[role]}
             </option>
           ))}
         </Select>

@@ -1,6 +1,8 @@
 "use client";
 
 import { useActionState } from "react";
+import type { Role } from "@prisma/client";
+import { ROLE_LABELS, ROLE_ORDER } from "@/lib/labels";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import {
@@ -12,14 +14,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { changeRole, deactivateUser, reactivateUser } from "./actions";
-import { ROLE_OPTIONS } from "./add-user-form";
 
 export type AdminUserRow = {
   id: string;
   name: string | null;
   email: string;
   employeeRef: string | null;
-  role: (typeof ROLE_OPTIONS)[number];
+  role: Role;
   deactivated: boolean;
 };
 
@@ -98,9 +99,9 @@ function UserRow({ user, isSelf }: { user: AdminUserRow; isSelf: boolean }) {
             disabled={rolePending}
             aria-label={`Role for ${user.email}`}
           >
-            {ROLE_OPTIONS.map((role) => (
+            {ROLE_ORDER.map((role) => (
               <option key={role} value={role}>
-                {role}
+                {ROLE_LABELS[role]}
               </option>
             ))}
           </Select>
