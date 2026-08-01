@@ -40,6 +40,9 @@ describe.skipIf(!testDatabaseUrl)("asset register page (real DB)", () => {
   let otherCategoryId: string;
   let inStockTag: string;
   let onOrderId: string;
+  let assignedTag: string;
+  let holderName: string;
+  let holderId: string;
 
   beforeAll(async () => {
     execSync("pnpm exec prisma migrate deploy", {
@@ -81,6 +84,32 @@ describe.skipIf(!testDatabaseUrl)("asset register page (real DB)", () => {
     ]);
     expect(inStock.id).toBeTruthy();
     onOrderId = onOrder.id;
+
+    // An asset with an OPEN assignment, so the STAFF_RO holder assertions
+    // below have something to fail against. Without it they pass vacuously —
+    // a fixture that cannot reach the asserted state is not a guard
+    // (LEARNINGS §Testing).
+    holderName = `Holder ${randomUUID().slice(0, 8)}`;
+    assignedTag = `REG-${randomUUID().slice(0, 12)}`;
+    const holder = await db.person.create({
+      data: {
+        name: holderName,
+        email: `holder-${randomUUID()}@example.com`,
+      },
+    });
+    holderId = holder.id;
+    const assigned = await db.asset.create({
+      data: {
+        categoryId,
+        make: "Register",
+        model: "Assigned",
+        tag: assignedTag,
+        status: AssetStatus.ASSIGNED,
+      },
+    });
+    await db.assignment.create({
+      data: { assetId: assigned.id, personId: holder.id },
+    });
   });
 
   afterAll(async () => {
@@ -122,6 +151,34 @@ describe.skipIf(!testDatabaseUrl)("asset register page (real DB)", () => {
       expect(html.includes('href="/assets/new"')).toBe(canWrite);
     });
   }
+
+  it("renders both shapes from one fetch, so a phone gets cards and a desktop gets the table", async () => {
+    await signInAs(Role.ADMIN_IT);
+    const html = await renderRegister({});
+
+    // Both exist in the markup; Tailwind breakpoints choose which is visible.
+    // jsdom and renderToStaticMarkup have no layout, so asserting visibility
+    // here would assert nothing (LEARNINGS §Testing) — a real-browser smoke
+    // is where the breakpoint itself gets checked.
+    expect(html).toContain('data-testid="asset-table"');
+    expect(html).toContain('data-testid="asset-card-list"');
+    // The same row appears in each shape, from a single query.
+    expect(html.split(assignedTag).length - 1).toBe(2);
+  });
+
+  it("shows no holder in EITHER shape for STAFF_RO", async () => {
+    await signInAs(Role.STAFF_RO);
+    const html = await renderRegister({});
+
+    // The register still lists the assigned asset...
+    expect(html).toContain(assignedTag);
+    // ...but carries no person data anywhere in it. The card list is a SECOND
+    // render path for the holder, so a role-conditional that is correct in the
+    // table can still be missing from the cards — this asserts both.
+    expect(html).not.toContain("Held by");
+    expect(html).not.toContain(holderName);
+    expect(html).not.toContain(`/people/${holderId}`);
+  });
 
   it("denies a deactivated user holding a live session", async () => {
     const user = await signInAs(Role.ADMIN_IT);

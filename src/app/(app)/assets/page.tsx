@@ -11,6 +11,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
+import { StatusChip } from "@/components/ui/status-chip";
+import { AssetCardList } from "./asset-card-list";
 import {
   Table,
   TableBody,
@@ -103,6 +105,28 @@ export default async function AssetsPage({
     holders.map((holder) => [holder.assetId, holder.person]),
   );
 
+  // Mapped ONCE, then rendered twice — the table above md and the card list
+  // below it. Both shapes read this array, so a role-conditional cannot be
+  // right in one shape and missing from the other.
+  //
+  // There is deliberately NO `canSeeHolders ?` here. holderByAsset is empty for
+  // a STAFF_RO viewer because the query above never ran, so a ternary would be
+  // unreachable — it was written, and deleting it left every test green
+  // (LEARNINGS §Testing: a secondary guard behind a working primary defends
+  // nothing you can demonstrate). The guard is the fetch, and only the fetch:
+  // data that was never selected cannot leak through any later UI change.
+  const rows = assets.map((asset) => ({
+    id: asset.id,
+    tag: asset.tag,
+    make: asset.make,
+    model: asset.model,
+    status: asset.status,
+    categoryName: asset.category.name,
+    siteName: asset.site?.name ?? null,
+    condition: asset.condition,
+    holder: holderByAsset.get(asset.id) ?? null,
+  }));
+
   return (
     <>
       <div className="flex items-baseline justify-between">
@@ -185,59 +209,69 @@ export default async function AssetsPage({
           No assets match. {canWrite ? "Add one to get started." : null}
         </p>
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Tag</TableHead>
-              <TableHead>Make / model</TableHead>
-              <TableHead>Category</TableHead>
-              <TableHead>Status</TableHead>
-              {canSeeHolders ? <TableHead>Held by</TableHead> : null}
-              <TableHead>Site</TableHead>
-              <TableHead>Condition</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {assets.map((asset) => (
-              <TableRow key={asset.id}>
-                <TableCell>
-                  <Link
-                    href={`/assets/${asset.id}`}
-                    className="underline underline-offset-4"
-                  >
-                    {asset.tag ?? "Untagged"}
-                  </Link>
-                </TableCell>
-                <TableCell>
-                  {asset.make} {asset.model}
-                </TableCell>
-                <TableCell>{asset.category.name}</TableCell>
-                <TableCell>{STATUS_LABELS[asset.status]}</TableCell>
-                {canSeeHolders ? (
-                  <TableCell>
-                    {/* Rendered only inside canSeeHolders, so the link can
-                        never appear for a viewer /people/[id] would reject. */}
-                    {(() => {
-                      const holder = holderByAsset.get(asset.id);
-                      return holder ? (
-                        <Link
-                          href={`/people/${holder.id}`}
-                          className="underline underline-offset-4"
-                        >
-                          {holder.name}
-                        </Link>
-                      ) : (
-                        "—"
-                      );
-                    })()}
-                  </TableCell>
-                ) : null}
-                <TableCell>{asset.site?.name ?? "—"}</TableCell>
-                <TableCell>{asset.condition ?? "—"}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <>
+          {/* Above md: the dense table. Its whitespace-nowrap and horizontal
+              overflow are correct here and only here. */}
+          <div data-testid="asset-table" className="hidden md:block">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Tag</TableHead>
+                  <TableHead>Make / model</TableHead>
+                  <TableHead>Category</TableHead>
+                  <TableHead>Status</TableHead>
+                  {canSeeHolders ? <TableHead>Held by</TableHead> : null}
+                  <TableHead>Site</TableHead>
+                  <TableHead>Condition</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.map((row) => (
+                  <TableRow key={row.id}>
+                    <TableCell>
+                      <Link
+                        href={`/assets/${row.id}`}
+                        className="font-mono tabular-nums underline underline-offset-4"
+                      >
+                        {row.tag ?? "Untagged"}
+                      </Link>
+                    </TableCell>
+                    <TableCell>
+                      {row.make} {row.model}
+                    </TableCell>
+                    <TableCell>{row.categoryName}</TableCell>
+                    <TableCell>
+                      <StatusChip status={row.status} />
+                    </TableCell>
+                    {canSeeHolders ? (
+                      <TableCell>
+                        {/* Rendered only inside canSeeHolders, so the link can
+                            never appear for a viewer /people/[id] would
+                            reject. row.holder is null for those viewers
+                            anyway — nothing was fetched. */}
+                        {row.holder ? (
+                          <Link
+                            href={`/people/${row.holder.id}`}
+                            className="underline underline-offset-4"
+                          >
+                            {row.holder.name}
+                          </Link>
+                        ) : (
+                          "—"
+                        )}
+                      </TableCell>
+                    ) : null}
+                    <TableCell>{row.siteName ?? "—"}</TableCell>
+                    <TableCell>{row.condition ?? "—"}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+
+          {/* Below md: one card per asset, tag first (AM-06). */}
+          <AssetCardList assets={rows} />
+        </>
       )}
     </>
   );
