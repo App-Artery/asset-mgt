@@ -201,7 +201,46 @@ mockups.** So fidelity is a verification step, not a hope.
   and no `/people/` link.
 - Full suite plus env-free build in CI.
 
-## 7. Advisor conditions
+## 7. Advisor conditions — NOT OBTAINED, and what was held back because of it
 
-Recorded on ruling. Security-touching work floors at T3 and does not merge
-without this section filled.
+The advisor was engaged at the start of this story and asked four times for a
+ruling on §5. It signalled idle four times without returning one. No ruling
+exists, so **§5 was not built.**
+
+What that means concretely:
+
+- `Retire` keeps its existing `window.confirm` (`lifecycle-actions.tsx:237`).
+- `Deactivate` keeps its existing behaviour, which means deactivating **another
+  user is still one unguarded click** — the gap §5 was written to close.
+- The lifecycle forms were relocated into the new asset-page layout **unchanged**,
+  so no guard was reimplemented and none could be lost in transit.
+
+Everything that shipped is presentation over unchanged queries and unchanged
+server actions. `await requireRole(...)` is still the first statement of every
+mutating action; `personSelectFor` and `canViewAssignments` are untouched; the
+register's role-conditional holder fetch is byte-identical.
+
+**To finish this story someone must either** obtain the ruling and build §5, or
+record a decision to proceed on the four enumerated guards in §5 without one.
+Until then the unguarded deactivation stands, and it should not be forgotten
+because the rest of the pass landed.
+
+## 8. What shipped
+
+| §   | Change                                   | State                                  |
+| --- | ---------------------------------------- | -------------------------------------- |
+| 4.1 | Vocabulary + one source of truth         | shipped                                |
+| 4.2 | Register: estate bar, sort, sticky       | shipped                                |
+| 4.3 | Asset page: custody, timeline, edit mode | shipped, minus the dialogs (§5)        |
+| 4.4 | Users: role labels                       | shipped; `Deactivate` dialog held (§5) |
+| 4.5 | Categories &amp; sites                   | shipped                                |
+| 5   | Destructive confirmations                | **not built — no advisor ruling**      |
+| —   | Search, pagination                       | deferred: #7, #8                       |
+| —   | "Last signed in"                         | deferred: needs a column               |
+
+Verification actually performed: full suite (280 tests) green against real
+Postgres; typecheck; lint; production build; every surface screenshotted at 1440
+and 390 against its mockup frame. Three new guards were proven red against their
+own window — and two of them failed that proof on the first attempt and were
+rewritten, which is the third recurrence in this project of "the guard I proved
+is not the guard I meant" (LEARNINGS §Testing).
