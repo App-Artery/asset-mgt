@@ -1,4 +1,13 @@
 import "@testing-library/jest-dom/vitest";
+import { cleanup } from "@testing-library/react";
+import { afterEach } from "vitest";
+
+// Testing Library auto-registers cleanup ONLY when vitest runs with
+// `globals: true`, which this project deliberately does not (vitest.config.ts).
+// Without this, every render() leaks into the next test in the file: queries
+// then hit "found multiple elements", or worse, silently assert against a
+// previous test's DOM. Register it once here rather than per file.
+afterEach(cleanup);
 
 // Vitest loads .env into process.env, and this repo's gitignored .env holds the
 // PRODUCTION DATABASE_URL (ops convenience from provisioning — AM-01 retro §5).

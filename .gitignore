@@ -41,6 +41,10 @@ seed-data/
 # vercel
 .vercel
 
+# local agent configuration and memory — machine-specific notes about this
+# developer's setup, never repo content
+.claude/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
