@@ -1,5 +1,6 @@
 import { AppBar } from "@/components/app-bar";
 import { AppRail } from "@/components/app-rail";
+import { AppTabBar } from "@/components/app-tabbar";
 import { requireRole } from "@/lib/authz";
 import { getDb } from "@/lib/db";
 
@@ -50,6 +51,7 @@ export default async function AppLayout({
           {children}
         </main>
       </div>
+      <AppTabBar role={role} />
     </div>
   );
 }
