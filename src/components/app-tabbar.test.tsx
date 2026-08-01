@@ -1,5 +1,13 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// NavLink reads usePathname for its active state, which needs a router context
+// jsdom has none of. Stubbed per file rather than globally in vitest.setup:
+// a global stub would silently satisfy any future component that genuinely
+// needs routing, and hide the omission.
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/assets",
+}));
 
 import { AppTabBar } from "@/components/app-tabbar";
 

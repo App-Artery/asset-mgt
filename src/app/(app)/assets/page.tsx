@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { AssetStatus, type Prisma } from "@prisma/client";
+import { Plus } from "lucide-react";
 import { z } from "zod";
 import { STATUS_LABELS } from "@/lib/asset-lifecycle";
 import { requireRole } from "@/lib/authz";
@@ -115,6 +116,19 @@ export default async function AssetsPage({
   // (LEARNINGS §Testing: a secondary guard behind a working primary defends
   // nothing you can demonstrate). The guard is the fetch, and only the fetch:
   // data that was never selected cannot leak through any later UI change.
+  // Counted from the rows already fetched, not with three more COUNT queries:
+  // the register is a page-sized list, so the arithmetic is free here and a
+  // round trip there. Singular/plural matters — "1 assets" reads as a bug.
+  const assignedCount = assets.filter((a) => a.status === "ASSIGNED").length;
+  const repairCount = assets.filter((a) => a.status === "IN_REPAIR").length;
+  const summary = [
+    `${assets.length} ${assets.length === 1 ? "asset" : "assets"}`,
+    assignedCount > 0 ? `${assignedCount} assigned` : null,
+    repairCount > 0 ? `${repairCount} in repair` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   const rows = assets.map((asset) => ({
     id: asset.id,
     tag: asset.tag,
@@ -129,19 +143,27 @@ export default async function AssetsPage({
 
   return (
     <>
-      <div className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">
-          Asset register
-        </h1>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="flex flex-col gap-0.5">
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Asset register
+          </h1>
+          {/* Counts describe what is on screen, so they follow the filters
+              rather than the whole table — a filtered register that still
+              claimed the full count would be lying about what you can see. */}
+          <p className="text-muted-foreground text-sm tabular-nums">
+            {summary}
+          </p>
+        </div>
         {/* "Add asset" is a page action, not navigation — it stays here after
             the shell took over the nav links. */}
         {canWrite ? (
-          <Link
-            href="/assets/new"
-            className="text-sm underline underline-offset-4"
-          >
-            Add asset
-          </Link>
+          <Button asChild size="sm">
+            <Link href="/assets/new">
+              <Plus aria-hidden="true" />
+              Add asset
+            </Link>
+          </Button>
         ) : null}
       </div>
 

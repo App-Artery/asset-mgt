@@ -1,7 +1,7 @@
-import Link from "next/link";
 import type { Role } from "@prisma/client";
 import { Boxes, LayoutList, Plus } from "lucide-react";
 
+import { NavLink } from "@/components/nav-link";
 import { cn } from "@/lib/utils";
 
 /**
@@ -47,12 +47,13 @@ function Tab({
   label: string;
 }) {
   return (
-    <Link
+    <NavLink
       href={href}
-      className="text-muted-foreground hover:text-foreground flex flex-col items-center gap-1 py-2 text-[0.65rem] [&_svg]:size-[17px]"
+      className="text-muted-foreground flex flex-col items-center gap-1 py-2 text-[0.65rem] [&_svg]:size-[17px]"
+      activeClassName="text-foreground font-medium"
     >
       {icon}
       {label}
-    </Link>
+    </NavLink>
   );
 }

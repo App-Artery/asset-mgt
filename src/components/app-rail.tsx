@@ -1,6 +1,7 @@
-import Link from "next/link";
 import type { Role } from "@prisma/client";
 import { Boxes, LayoutList, Settings2, UserPlus } from "lucide-react";
+
+import { NavLink } from "@/components/nav-link";
 
 /**
  * The desktop navigation rail (docs/DESIGN-SYSTEM.md §4).
@@ -68,12 +69,16 @@ function RailLink({
   label: string;
 }) {
   return (
-    <Link
+    <NavLink
       href={href}
       className="hover:bg-muted flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm [&_svg]:size-4 [&_svg]:opacity-70"
+      // The current page reads as raised, not merely tinted: a background plus
+      // a hairline shadow, and the icon drops its dimming so the whole row
+      // gains weight rather than just changing colour.
+      activeClassName="bg-card font-medium shadow-xs [&_svg]:opacity-100"
     >
       {icon}
       {label}
-    </Link>
+    </NavLink>
   );
 }
