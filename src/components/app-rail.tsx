@@ -51,7 +51,12 @@ export function AppRail({ role }: { role: Role }) {
           <RailLink
             href="/admin/reference"
             icon={<Settings2 />}
-            label="Categories &amp; sites"
+            // A literal ampersand, not &amp;. The entity form happens to work
+            // here because JSX decodes entities in attribute STRING LITERALS at
+            // compile time — but only there. Wrapping the same string in braces,
+            // or lifting these items into a data array, silently renders
+            // "Categories &amp; sites" to the screen and to screen readers.
+            label="Categories & sites"
           />
         </div>
       ) : null}
