@@ -34,7 +34,7 @@ import {
   createUser,
   deactivateUser,
   reactivateUser,
-} from "@/app/admin/users/actions";
+} from "@/app/(app)/admin/users/actions";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const mockAuth = auth as unknown as Mock;

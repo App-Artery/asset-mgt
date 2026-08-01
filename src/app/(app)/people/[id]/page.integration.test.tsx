@@ -35,8 +35,8 @@ vi.mock("@/auth", () => ({
 
 import { auth } from "@/auth";
 import { AuthorizationError } from "@/lib/authz";
-import PersonPage from "@/app/people/[id]/page";
-import { fetchPersonView } from "@/app/people/[id]/person-view";
+import PersonPage from "@/app/(app)/people/[id]/page";
+import { fetchPersonView } from "@/app/(app)/people/[id]/person-view";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const mockAuth = auth as unknown as Mock;

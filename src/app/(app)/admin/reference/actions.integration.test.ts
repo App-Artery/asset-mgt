@@ -34,7 +34,7 @@ import {
   createSite,
   renameCategory,
   renameSite,
-} from "@/app/admin/reference/actions";
+} from "@/app/(app)/admin/reference/actions";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const mockAuth = auth as unknown as Mock;

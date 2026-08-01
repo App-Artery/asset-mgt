@@ -13,7 +13,7 @@ export default async function NewAssetPage() {
   ]);
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-8 p-8">
+    <>
       <div className="flex items-baseline justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">Add asset</h1>
         <Link href="/assets" className="text-sm underline underline-offset-4">
@@ -38,6 +38,6 @@ export default async function NewAssetPage() {
       ) : (
         <AssetForm categories={categories} sites={sites} />
       )}
-    </main>
+    </>
   );
 }

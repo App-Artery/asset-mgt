@@ -47,18 +47,8 @@ export default async function PersonPage({
   const { person, deactivatedAt, open, past } = view;
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-4xl flex-col gap-8 p-8">
-      <div className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">{person.name}</h1>
-        <div className="flex items-baseline gap-4 text-sm">
-          <Link href="/assets" className="underline underline-offset-4">
-            Register
-          </Link>
-          <Link href="/" className="underline underline-offset-4">
-            Home
-          </Link>
-        </div>
-      </div>
+    <>
+      <h1 className="text-2xl font-semibold tracking-tight">{person.name}</h1>
 
       <dl className="grid grid-cols-2 gap-x-8 gap-y-3 text-sm sm:grid-cols-3">
         {person.employeeRef !== undefined ? (
@@ -157,7 +147,7 @@ export default async function PersonPage({
           </>
         )}
       </section>
-    </main>
+    </>
   );
 }
 

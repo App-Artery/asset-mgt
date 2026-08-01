@@ -43,7 +43,7 @@ import {
   returnFromRepair,
   sendToRepair,
   updateAsset,
-} from "@/app/assets/actions";
+} from "@/app/(app)/assets/actions";
 import {
   ALREADY_ASSIGNED_MESSAGE,
   CONDITION_NOTES_REQUIRED_MESSAGE,

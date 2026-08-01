@@ -30,7 +30,7 @@ vi.mock("@/auth", () => ({
 }));
 
 import { auth } from "@/auth";
-import MyAssignmentsPage from "@/app/me/assignments/page";
+import MyAssignmentsPage from "@/app/(app)/me/assignments/page";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const mockAuth = auth as unknown as Mock;

@@ -104,21 +104,21 @@ export default async function AssetsPage({
   );
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-5xl flex-col gap-8 p-8">
+    <>
       <div className="flex items-baseline justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">
           Asset register
         </h1>
-        <div className="flex items-baseline gap-4 text-sm">
-          {canWrite ? (
-            <Link href="/assets/new" className="underline underline-offset-4">
-              Add asset
-            </Link>
-          ) : null}
-          <Link href="/" className="underline underline-offset-4">
-            Home
+        {/* "Add asset" is a page action, not navigation — it stays here after
+            the shell took over the nav links. */}
+        {canWrite ? (
+          <Link
+            href="/assets/new"
+            className="text-sm underline underline-offset-4"
+          >
+            Add asset
           </Link>
-        </div>
+        ) : null}
       </div>
 
       {/* A plain GET form: filters live in the URL, so a filtered register is
@@ -239,6 +239,6 @@ export default async function AssetsPage({
           </TableBody>
         </Table>
       )}
-    </main>
+    </>
   );
 }
