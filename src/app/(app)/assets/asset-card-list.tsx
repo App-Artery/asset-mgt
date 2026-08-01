@@ -47,8 +47,13 @@ export function AssetCardList({ assets }: { assets: AssetCardRow[] }) {
                   {asset.tag}
                 </span>
               ) : (
+                // "Untagged", matching the table and the detail page's
+                // "Untagged asset". One vocabulary for one state: the card and
+                // the row are the same register at two widths, and a reader
+                // who learns a word in one must not meet a new one in the
+                // other.
                 <span className="text-muted-foreground rounded border border-dashed px-1.5 font-mono text-xs">
-                  no tag
+                  Untagged
                 </span>
               )}
               <StatusChip status={asset.status} />
