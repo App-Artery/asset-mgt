@@ -29,7 +29,20 @@ export async function requestSignIn(
   const parsed = emailSchema.safeParse(formData.get("email"));
   if (parsed.success) {
     try {
-      await signIn("resend", { email: parsed.data, redirect: false });
+      // redirectTo is what the magic link redirects to after the token
+      // verifies — it is baked into the emailed link, NOT a redirect performed
+      // here (`redirect: false` only suppresses this action's own navigation).
+      // It must be explicit: Auth.js otherwise falls back to the Referer, which
+      // is the page the form sits on — /signin?callbackUrl=… for anyone the
+      // middleware bounced — so the verified link lands the user back on the
+      // sign-in form while holding a valid session. Constant, never
+      // caller-supplied: this is the one unauthenticated mutation in the app,
+      // and it must not become a redirect gadget. / routes on by role.
+      await signIn("resend", {
+        email: parsed.data,
+        redirect: false,
+        redirectTo: "/",
+      });
     } catch (error) {
       // Rendered outcome stays identical to success — see above. But a
       // GENUINE failure (Resend outage, bad API key) must leave a server
