@@ -38,6 +38,30 @@ function render() {
   return SignInPage({ searchParams: Promise.resolve({}) });
 }
 
+/**
+ * Resolves the target of the redirect a page performed, failing if it rendered
+ * instead. Asserting the TARGET (not merely that some redirect happened) is the
+ * point: landing on the wrong page while authenticated is the exact bug this
+ * suite guards, and "/signin" would satisfy a bare NEXT_REDIRECT check.
+ */
+async function redirectTargetOf(page: Promise<unknown>): Promise<string> {
+  const outcome = await page.then(
+    () => null,
+    (error: unknown) => ({ error }),
+  );
+  if (!outcome) {
+    throw new Error("expected the page to redirect, but it rendered");
+  }
+  const digest = (outcome.error as { digest?: unknown }).digest;
+  if (typeof digest !== "string" || !digest.startsWith("NEXT_REDIRECT;")) {
+    // A genuine failure (DB down, bad query) — surface it as itself rather
+    // than as a confusing assertion mismatch.
+    throw outcome.error;
+  }
+  // next/navigation encodes redirects as `NEXT_REDIRECT;<kind>;<target>;<status>;`
+  return digest.split(";")[2];
+}
+
 describe.skipIf(!testDatabaseUrl)("signin page session guard (real DB)", () => {
   let db: PrismaClient;
 
@@ -67,11 +91,7 @@ describe.skipIf(!testDatabaseUrl)("signin page session guard (real DB)", () => {
     });
     mockAuth.mockResolvedValue({ user: { id: user.id } });
 
-    // next/navigation redirect() throws a NEXT_REDIRECT control error whose
-    // digest carries the target.
-    await expect(render()).rejects.toMatchObject({
-      digest: expect.stringContaining("NEXT_REDIRECT"),
-    });
+    await expect(redirectTargetOf(render())).resolves.toBe("/");
   });
 
   it("renders the form for a deactivated user rather than looping back to /", async () => {
