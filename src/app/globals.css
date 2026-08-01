@@ -21,6 +21,14 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-st-stock: var(--st-stock);
+  --color-st-stock-bg: var(--st-stock-bg);
+  --color-st-assigned: var(--st-assigned);
+  --color-st-assigned-bg: var(--st-assigned-bg);
+  --color-st-repair: var(--st-repair);
+  --color-st-repair-bg: var(--st-repair-bg);
+  --color-st-inert: var(--st-inert);
+  --color-st-inert-bg: var(--st-inert-bg);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --radius-sm: calc(var(--radius) - 4px);
@@ -49,6 +57,21 @@
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
+
+  /* Semantic status colours (docs/DESIGN-SYSTEM.md §6). shadcn's neutral base
+     ships none, and the register has five statuses operators scan all day.
+     Weight follows operational attention: repair pulls the eye, retired lets
+     go of it. ON_ORDER and RETIRED share the inert pair deliberately — neither
+     wants attention — and are told apart by the chip's dot treatment, never by
+     hue alone. These are separate from the accent and are never decorative. */
+  --st-stock: oklch(0.48 0.12 155);
+  --st-stock-bg: oklch(0.95 0.035 155);
+  --st-assigned: oklch(0.48 0.14 255);
+  --st-assigned-bg: oklch(0.95 0.03 255);
+  --st-repair: oklch(0.52 0.12 70);
+  --st-repair-bg: oklch(0.95 0.05 80);
+  --st-inert: oklch(0.55 0 0);
+  --st-inert-bg: oklch(0.97 0 0);
 }
 
 .dark {
@@ -70,6 +93,17 @@
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
+
+  /* Hand-tuned, not inverted: lightness rises and chroma drops so a chip sits
+     on oklch(0.145 0 0) without glowing. */
+  --st-stock: oklch(0.8 0.14 155);
+  --st-stock-bg: oklch(0.32 0.05 155);
+  --st-assigned: oklch(0.8 0.12 255);
+  --st-assigned-bg: oklch(0.32 0.05 255);
+  --st-repair: oklch(0.83 0.13 80);
+  --st-repair-bg: oklch(0.33 0.05 70);
+  --st-inert: oklch(0.68 0 0);
+  --st-inert-bg: oklch(0.26 0 0);
 }
 
 @layer base {
