@@ -135,8 +135,10 @@ would glow across a full-width band.
 
 ### 4.3 Asset page (`src/app/(app)/assets/[id]/`)
 
-Order becomes: breadcrumb → tag + status + primary action → two columns
-(custody, details, purchase | history timeline).
+Order becomes: breadcrumb → tag + status → two columns (custody, lifecycle,
+details, purchase | history timeline). The primary lifecycle action sits at the
+head of its own section rather than beside the title; an earlier draft of this
+line put it in the header and nothing was ever built that way.
 
 - **Custody card.** `Held by` leaves the field grid and becomes the page's
   second element. It is the answer to the question the page exists for, and it
@@ -153,11 +155,45 @@ Order becomes: breadcrumb → tag + status + primary action → two columns
   travels with every field that writes `AssetEvent.notes` — unchanged copy,
   unchanged placement relative to its input.
 
+  **Shipped in #10, not in this story.** The pass moved only `Retire` behind a
+  dialog and left `Receive and tag`, `Assign`, `Take it back` and both repair
+  forms expanded and stacked, while this section claimed all of them. What
+  landed:
+
+  - `FormDialog` (`src/components/form-dialog.tsx`) — the sibling of
+    `ConfirmActionDialog` for a form with no confirm semantics. The §5 in-flight
+    guarantees are one property held by both, asserted once in
+    `test/action-dialog-guards.tsx` and run over each; `Retire` stays a
+    `ConfirmActionDialog`, because what it asks for is consent.
+  - Which move leads is a UI judgement, stated as `MOVE_PRIORITY` rather than
+    read off the order the server pushes legal moves in. `RETIRE` is always
+    last, so the nearest thing to a delete is never the button under the cursor.
+  - `More` is a native `<details>`: no new dependency, and its items stay in the
+    server-rendered markup whether it is open or shut — which is what lets the
+    AM-03 acceptance tests keep asserting which moves a status offers. Radix
+    mounts dialog CONTENT only once open and portals it, so the half of that
+    claim living inside the return and assign forms moved to
+    `[id]/lifecycle-actions.test.tsx`, which can open them.
+  - `EventNoteHint` is its own module and now carries the assign form too, which
+    had a weaker bespoke paragraph — the form where a name is likeliest to be
+    typed, since one is being chosen in the field above it. Five fields write
+    that column; a test opens all five dialogs and looks for the warning beside
+    the input, not merely somewhere in the dialog.
+
 ### 4.4 Users (`src/app/(app)/admin/users/`)
 
 Roles render through `ROLE_LABELS` in the table, the picker and the app-bar chip.
-`Deactivate` leaves the row and moves into a `⋯` menu behind a confirm dialog;
-deactivated users recede and offer `Reactivate`. `Add user` becomes a dialog.
+`Deactivate` goes behind a confirm dialog; deactivated users recede and offer
+`Reactivate`. `Add user` becomes a dialog, opened from a button in the page
+header (shipped in #10 — this section claimed it a story early).
+
+Two corrections to what this section said before: `Deactivate` stayed an inline
+`Deactivate…` trigger on the row rather than moving into a `⋯` menu, and the
+confirm dialog behind it is the guard that mattered — that is what shipped, and
+the row menu is not planned. `Add user` is a `FormDialog` (§4.3), so it holds the
+same in-flight guarantees as the destructive path: it cannot be dismissed
+mid-flight, and a rejected email is reported without losing the other three
+fields.
 
 ### 4.5 Categories &amp; sites (`src/app/(app)/admin/reference/`)
 
@@ -230,23 +266,29 @@ here because the T3 floor in `CLAUDE.md` is satisfied by a reviewed decision, no
 by the absence of one.
 
 What was built to, in place of conditions, is §5's own table — each guard
-asserted as a property in `src/components/confirm-action-dialog.test.tsx`, and
-each proven to go red with the production line that defends it removed. Guard 1
-is structural (the trigger sits outside the form) and is not claimed as
-red-proved.
+asserted as a property and each proven to go red with the production line that
+defends it removed. Guard 1 is structural (the trigger sits outside the form) and
+is not claimed as red-proved.
+
+Since #10 the guards live in `test/action-dialog-guards.tsx` and are run over
+both `ConfirmActionDialog` and `FormDialog`, so a regression in either fails the
+same assertion. A copy per component would be two descriptions of one property,
+free to drift — and silently, since both files would stay green.
 
 ## 8. What shipped
 
-| §   | Change                                   | State                                         |
-| --- | ---------------------------------------- | --------------------------------------------- |
-| 4.1 | Vocabulary + one source of truth         | shipped                                       |
-| 4.2 | Register: estate bar, sort, sticky       | shipped                                       |
-| 4.3 | Asset page: custody, timeline, edit mode | shipped; lifecycle forms still expanded — #10 |
-| 4.4 | Users: role labels, guarded deactivation | shipped; Add user still expanded — #10        |
-| 4.5 | Categories &amp; sites                   | shipped                                       |
-| 5   | Destructive confirmations                | shipped on the decision above                 |
-| —   | Search, pagination                       | deferred: #7, #8                              |
-| —   | "Last signed in"                         | deferred: #11 (needs a column)                |
+| §   | Change                                        | State                          |
+| --- | --------------------------------------------- | ------------------------------ |
+| 4.1 | Vocabulary + one source of truth              | shipped                        |
+| 4.2 | Register: estate bar, sort, sticky            | shipped                        |
+| 4.3 | Asset page: custody, timeline, edit mode      | shipped                        |
+| 4.3 | Lifecycle forms into primary + More + dialogs | shipped in #10                 |
+| 4.4 | Users: role labels, guarded deactivation      | shipped                        |
+| 4.4 | Add user into a dialog                        | shipped in #10                 |
+| 4.5 | Categories &amp; sites                        | shipped                        |
+| 5   | Destructive confirmations                     | shipped on the decision above  |
+| —   | Search, pagination                            | deferred: #7, #8               |
+| —   | "Last signed in"                              | deferred: #11 (needs a column) |
 
 Verification actually performed: full suite (295 tests) green against real
 Postgres; typecheck; lint; production build; every surface screenshotted at 1440

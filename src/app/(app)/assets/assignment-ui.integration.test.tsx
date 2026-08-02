@@ -280,21 +280,32 @@ describe.skipIf(!testDatabaseUrl)("asset assignment UI (real DB)", () => {
 
   // AC 1: an ASSIGNED asset offers return (to stock OR to repair) and retire,
   // and NO separate "send to repair" — that move is the repair-bound return.
+  //
+  // #10 moved every lifecycle form into a dialog, so an offered move is now a
+  // TRIGGER rather than an inline form heading, and the trailing ellipsis is
+  // part of the affordance. Same claim, different selector — with one half of it
+  // relocated: Radix mounts dialog content only once open and portals it, so
+  // nothing inside a dialog reaches server-rendered markup. What the return form
+  // asks for once opened (both destinations, one action) and what the picker
+  // shows (employeeRef, never an email) are asserted in
+  // `[id]/lifecycle-actions.test.tsx`, which can open them.
   describe("lifecycle moves offered", () => {
     it("offers assign, send to repair and retire on an IN_STOCK asset", async () => {
       await signInAs(Role.ADMIN_IT);
 
-      const { html } = await renderDetail(stockAssetId);
+      const { html, models, payload } = await renderDetail(stockAssetId);
 
-      expect(html).toContain(">Assign<");
-      expect(html).toContain(">Send to repair<");
-      // AM-09: retire moved behind a confirm dialog, so the affordance is
-      // its trigger rather than an inline form heading. The assertion still
-      // says the same thing — this status offers retirement.
+      expect(html).toContain(">Assign…<");
+      expect(html).toContain(">Send to repair…<");
       expect(html).toContain(">Retire asset…<");
-      expect(html).not.toContain(">Take it back<");
-      // The picker disambiguates by employeeRef, and carries no email.
-      expect(html).toContain(personRef);
+      expect(html).not.toContain(">Take it back…<");
+      // The picker's people are still fetched for this status — the query is
+      // what the assign dialog is handed, and it is only made when the move is
+      // offered. The rows come back carrying an email for ADMIN_IT, and the
+      // page prints none of it: PickerPerson has no email field, so an address
+      // cannot cross to the client whatever the viewer's role.
+      expect(models).toContain("Person");
+      expect(payload).toContain(personEmail);
       expect(html).not.toContain(personEmail);
     });
 
@@ -303,16 +314,12 @@ describe.skipIf(!testDatabaseUrl)("asset assignment UI (real DB)", () => {
 
       const { html } = await renderDetail(assignedAssetId);
 
-      expect(html).toContain(">Take it back<");
-      expect(html).toContain(">Back to stock<");
-      expect(html).toContain(">Straight to repair<");
-      // AM-09: retire moved behind a confirm dialog, so the affordance is
-      // its trigger rather than an inline form heading. The assertion still
-      // says the same thing — this status offers retirement.
+      // One move covering both ways out of ASSIGNED that are not retirement.
+      expect(html).toContain(">Take it back…<");
       expect(html).toContain(">Retire asset…<");
       // Not a second, parallel path out of ASSIGNED.
-      expect(html).not.toContain(">Send to repair<");
-      expect(html).not.toContain(">Assign<");
+      expect(html).not.toContain(">Send to repair…<");
+      expect(html).not.toContain(">Assign…<");
     });
   });
 });
