@@ -1,5 +1,5 @@
 import NextAuth from "next-auth";
-import { authConfig } from "@/auth.config";
+import { edgeAuthConfig } from "@/auth.edge";
 
 /**
  * Deny-by-default authentication gate (docs/DESIGN.md security constraint 1).
@@ -10,8 +10,16 @@ import { authConfig } from "@/auth.config";
  * JWT is never trusted for roles.
  *
  * Uses the edge-safe config only: no Prisma import may ever reach this file.
+ *
+ * `edgeAuthConfig` is passed as a FUNCTION, never called here. The object form
+ * of NextAuth() runs `setEnvDefaults` at module scope, reading AUTH_SECRET
+ * once per edge isolate at module evaluation; the function form defers it to
+ * request time, which is also the only form in which the factory's throw does
+ * not fire during a zero-env build. Why the secret is handled there rather
+ * than here, and what is and is not known about the production failure it
+ * fixes, is documented in src/auth.edge.ts (issue #14).
  */
-export default NextAuth(authConfig).auth;
+export default NextAuth(edgeAuthConfig).auth;
 
 export const config = {
   // /signin is the ONLY public page (uniform magic-link flow, AM-01);

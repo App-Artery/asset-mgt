@@ -19,6 +19,20 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: ["./vitest.setup.ts"],
+    exclude: [
+      "**/node_modules/**",
+      "**/dist/**",
+      // Agent worktrees live under .claude/worktrees/, i.e. INSIDE the repo,
+      // and a local pnpm store can appear at .pnpm-store/. Both contain whole
+      // copies of the source tree, so the default include globs collect
+      // another branch's tests — 264 failing files from work not on this
+      // branch. Mutation runs additionally leave .stryker-tmp/sandbox-*/
+      // copies with @ts-nocheck injected. CI never sees any of this (fresh
+      // checkout, no worktrees), so it only ever breaks local runs.
+      "**/.claude/**",
+      "**/.pnpm-store/**",
+      "**/.stryker-tmp/**",
+    ],
     // Integration tests share one real test database, and the last-admin
     // guard counts active admins across the whole User table — files that
     // create ADMIN_IT rows while another file stages a "last admin" scenario
