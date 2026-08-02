@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { lastLinkSentByEmail, type LinkSendRow } from "./last-link-sent";
+import {
+  lastLinkSentByEmail,
+  normaliseIdentifier,
+  type LinkSendRow,
+} from "./last-link-sent";
 
 const OLDER = new Date("2026-07-28T09:00:00.000Z");
 const NEWER = new Date("2026-08-01T17:30:00.000Z");
@@ -47,5 +51,51 @@ describe("lastLinkSentByEmail", () => {
 
   it("has no entry for an address that was never sent a link", () => {
     expect(lastLinkSentByEmail([]).size).toBe(0);
+  });
+
+  // The stored identifier is NFKC — `@auth/core`'s `defaultNormalizer` applies
+  // it before `createVerificationToken` inserts. `User.email` is whatever the
+  // admin typed when provisioning, which is NOT normalised for us. So the
+  // realistic shape of this bug is a token row in composed form and a user
+  // record in decomposed form: without NFKC on both sides the lookup misses
+  // and the column reports "No link sent yet" about somebody who was invited.
+  it("matches a decomposed user email against a composed token row", () => {
+    const composed = "josé@example.com"; // é as one code point
+    const decomposed = "josé@example.com"; // e + combining acute
+
+    const byEmail = lastLinkSentByEmail([row(composed, NEWER)]);
+
+    expect(byEmail.get(normaliseIdentifier(decomposed))).toEqual(NEWER);
+  });
+
+  it("folds the two spellings onto one key rather than two entries", () => {
+    const byEmail = lastLinkSentByEmail([
+      row("josé@example.com", OLDER),
+      row("josé@example.com", NEWER),
+    ]);
+
+    expect(byEmail.size).toBe(1);
+    expect(byEmail.get("josé@example.com")).toEqual(NEWER);
+  });
+});
+
+describe("normaliseIdentifier", () => {
+  it("folds decomposed onto composed", () => {
+    expect(normaliseIdentifier("josé@example.com")).toBe("josé@example.com");
+  });
+
+  // Compatibility folding — the K in NFKC. Plain NFC leaves these alone, so
+  // this case fails against `.normalize("NFC")` as well as against no
+  // normalisation, which is what pins the choice of form.
+  it("folds fullwidth compatibility characters to ASCII", () => {
+    expect(normaliseIdentifier("ＧＲＡＣＥ@example.com")).toBe(
+      "grace@example.com",
+    );
+  });
+
+  it("still lowercases and trims", () => {
+    expect(normaliseIdentifier("  Grace@Example.com  ")).toBe(
+      "grace@example.com",
+    );
   });
 });

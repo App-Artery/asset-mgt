@@ -1,5 +1,5 @@
 import { requireRole } from "@/lib/authz";
-import { lastLinkSentByEmail } from "@/lib/last-link-sent";
+import { lastLinkSentByEmail, normaliseIdentifier } from "@/lib/last-link-sent";
 import { getDb } from "@/lib/db";
 import { AddUserForm } from "./add-user-form";
 import { UsersTable, type AdminUserRow } from "./users-table";
@@ -84,11 +84,15 @@ export default async function AdminUsersPage() {
   ]);
 
   /**
-   * Lowercased on BOTH sides — see `src/lib/last-link-sent.ts`, which is a
-   * module rather than four lines here so the newest-wins comparison can be
-   * fed both input orders. A real-DB test cannot demonstrate it: `groupBy`
-   * order is unspecified, and the integration test written for it passed
-   * against a plain last-write-wins `set`.
+   * Folded through `normaliseIdentifier` on BOTH sides — see
+   * `src/lib/last-link-sent.ts`, which is a module rather than four lines here
+   * so the newest-wins comparison can be fed both input orders. A real-DB test
+   * cannot demonstrate it: `groupBy` order is unspecified, and the integration
+   * test written for it passed against a plain last-write-wins `set`.
+   *
+   * The fold is shared, not merely equivalent. These two calls are the whole
+   * join: normalise one side differently from the other and every affected row
+   * silently reads "No link sent yet".
    */
   const linkSentByEmail = lastLinkSentByEmail(linkSends);
 
@@ -101,7 +105,7 @@ export default async function AdminUsersPage() {
     deactivated: user.deactivatedAt !== null,
     lastSignInAt: user.emailVerified,
     lastLinkSentAt:
-      linkSentByEmail.get(user.email.trim().toLowerCase()) ?? null,
+      linkSentByEmail.get(normaliseIdentifier(user.email)) ?? null,
   }));
 
   return (

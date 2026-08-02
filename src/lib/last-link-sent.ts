@@ -7,8 +7,32 @@ export type LinkSendRow = {
 };
 
 /**
+ * Fold an address to the join key both sides of this lookup must agree on.
+ *
+ * This is `@auth/core`'s own `defaultNormalizer`, step for step and in its
+ * order (`lib/actions/signin/send-token.js`): `.normalize("NFKC")`, then
+ * `.toLowerCase()`, then `.trim()`. That is what `sendToken` applies to the
+ * address BEFORE `createVerificationToken` inserts it, so it is what is
+ * actually sitting in `VerificationToken.identifier`.
+ *
+ * The order is copied verbatim rather than re-derived. No claim is made here
+ * that the three steps commute — the point is that this fold and the one that
+ * produced the stored value are the same fold by construction, so the question
+ * never has to be answered.
+ *
+ * Exported so the fold below and the lookup in
+ * `src/app/(app)/admin/users/page.tsx` cannot drift apart. They must apply the
+ * IDENTICAL fold: a key normalised on only one side is worse than no
+ * normalisation at all, because it turns a match into a miss and the column
+ * then reports "No link sent yet" about somebody who was sent one.
+ */
+export function normaliseIdentifier(identifier: string): string {
+  return identifier.normalize("NFKC").toLowerCase().trim();
+}
+
+/**
  * Fold `VerificationToken` sends into "when was a link last issued to this
- * address", keyed on the lowercased identifier.
+ * address", keyed on the normalised identifier.
  *
  * ## Why this is a function and not four lines in the page
  *
@@ -25,19 +49,18 @@ export type LinkSendRow = {
  * hitting (issue #12). Feeding this function both permutations directly is
  * deterministic, and it fails for either one if the comparison goes.
  *
- * Keyed lowercase on purpose. `@auth/core` normalises the identifier
- * (`.normalize("NFKC").toLowerCase().trim()`, `lib/actions/signin/send-token.js`)
- * and emails are lowercased at every write (CLAUDE.md), so in a healthy
- * database no two rows collide. This survives the unhealthy one: a row
- * predating either rule must not read as "never invited", which is the one
- * answer this column must never invent.
+ * Keyed through `normaliseIdentifier` on purpose. `@auth/core` normalises the
+ * identifier before insert and emails are lowercased at every write
+ * (CLAUDE.md), so in a healthy database no two rows collide. This survives the
+ * unhealthy one: a row predating either rule must not read as "never invited",
+ * which is the one answer this column must never invent.
  */
 export function lastLinkSentByEmail(rows: LinkSendRow[]): Map<string, Date> {
   const byEmail = new Map<string, Date>();
   for (const row of rows) {
     const sentAt = row._max.createdAt;
     if (!sentAt) continue;
-    const identifier = row.identifier.trim().toLowerCase();
+    const identifier = normaliseIdentifier(row.identifier);
     const seen = byEmail.get(identifier);
     // Newest wins regardless of the order the rows arrived in. Without this,
     // the rendered timestamp is whichever row came last — non-deterministic

@@ -34,11 +34,28 @@ scope changes" below:
 
 Both are shown on `/admin/users`, and only there, so an IT admin can tell an
 account whose invitation never arrived from one nobody has invited yet.
-**Retention:** no per-sign-in history is kept — each is a single timestamp,
-overwritten in place, and nothing about sign-in activity is written to the
-append-only `UserEvent` table, where it would be permanently uncorrectable and
-unerasable. Engineering change of 2026-08-02 (issue #11); no legal review is
-implied.
+**Retention:** neither field accumulates a sign-in history, but the two retain
+by different mechanisms and only the first is an overwrite:
+
+- `User.emailVerified` is a **single timestamp, overwritten in place** on each
+  successful redemption. Only the most recent sign-in survives; earlier ones
+  are not recoverable from this column.
+- `VerificationToken` holds **one row per unredeemed link**, so **several rows
+  may exist for one address at the same time** — the table is unique on
+  (`identifier`, `token`), not on `identifier`. A row is deleted when its link
+  is redeemed (`@auth/prisma-adapter` `useVerificationToken`). A link that is
+  never redeemed leaves its row in place: expiry does not delete it, and no
+  pruning job exists, so unredeemed rows persist until deleted deliberately.
+  `/admin/users` displays only the newest `createdAt` per address — that is a
+  display choice and not a statement about what the table holds.
+
+These rows are also the sign-in throttle's counting basis
+(`src/lib/sign-in-policy.ts`), so pruning them is a rate-limit change, not
+only a retention one.
+
+Nothing about sign-in activity is written to the append-only `UserEvent`
+table, where it would be permanently uncorrectable and unerasable.
+Engineering change of 2026-08-02 (issue #11); no legal review is implied.
 
 ## Where it is processed
 
