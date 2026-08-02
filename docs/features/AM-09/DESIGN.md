@@ -201,46 +201,43 @@ mockups.** So fidelity is a verification step, not a hope.
   and no `/people/` link.
 - Full suite plus env-free build in CI.
 
-## 7. Advisor conditions — NOT OBTAINED, and what was held back because of it
+## 7. Advisor conditions — none obtained; Kelvin's recorded decision
 
-The advisor was engaged at the start of this story and asked four times for a
-ruling on §5. It signalled idle four times without returning one. No ruling
-exists, so **§5 was not built.**
+The advisor was engaged twice, as two independent agents, and asked five times
+between them. Both signalled idle repeatedly without ever returning a ruling —
+the mechanism, not either agent, is what failed.
 
-What that means concretely:
+**Kelvin's decision, 2026-08-02: proceed on the four enumerated guards in §5
+without a ruling.** That decision is the gate for this story, and it is recorded
+here because the T3 floor in `CLAUDE.md` is satisfied by a reviewed decision, not
+by the absence of one.
 
-- `Retire` keeps its existing `window.confirm` (`lifecycle-actions.tsx:237`).
-- `Deactivate` keeps its existing behaviour, which means deactivating **another
-  user is still one unguarded click** — the gap §5 was written to close.
-- The lifecycle forms were relocated into the new asset-page layout **unchanged**,
-  so no guard was reimplemented and none could be lost in transit.
-
-Everything that shipped is presentation over unchanged queries and unchanged
-server actions. `await requireRole(...)` is still the first statement of every
-mutating action; `personSelectFor` and `canViewAssignments` are untouched; the
-register's role-conditional holder fetch is byte-identical.
-
-**To finish this story someone must either** obtain the ruling and build §5, or
-record a decision to proceed on the four enumerated guards in §5 without one.
-Until then the unguarded deactivation stands, and it should not be forgotten
-because the rest of the pass landed.
+What was built to, in place of conditions, is §5's own table — each guard
+asserted as a property in `src/components/confirm-action-dialog.test.tsx`, and
+each proven to go red with the production line that defends it removed. Guard 1
+is structural (the trigger sits outside the form) and is not claimed as
+red-proved.
 
 ## 8. What shipped
 
-| §   | Change                                   | State                                  |
-| --- | ---------------------------------------- | -------------------------------------- |
-| 4.1 | Vocabulary + one source of truth         | shipped                                |
-| 4.2 | Register: estate bar, sort, sticky       | shipped                                |
-| 4.3 | Asset page: custody, timeline, edit mode | shipped, minus the dialogs (§5)        |
-| 4.4 | Users: role labels                       | shipped; `Deactivate` dialog held (§5) |
-| 4.5 | Categories &amp; sites                   | shipped                                |
-| 5   | Destructive confirmations                | **not built — no advisor ruling**      |
-| —   | Search, pagination                       | deferred: #7, #8                       |
-| —   | "Last signed in"                         | deferred: needs a column               |
+| §   | Change                                   | State                         |
+| --- | ---------------------------------------- | ----------------------------- |
+| 4.1 | Vocabulary + one source of truth         | shipped                       |
+| 4.2 | Register: estate bar, sort, sticky       | shipped                       |
+| 4.3 | Asset page: custody, timeline, edit mode | shipped                       |
+| 4.4 | Users: role labels, guarded deactivation | shipped                       |
+| 4.5 | Categories &amp; sites                   | shipped                       |
+| 5   | Destructive confirmations                | shipped on the decision above |
+| —   | Search, pagination                       | deferred: #7, #8              |
+| —   | "Last signed in"                         | deferred: needs a column      |
 
-Verification actually performed: full suite (280 tests) green against real
+Verification actually performed: full suite (289 tests) green against real
 Postgres; typecheck; lint; production build; every surface screenshotted at 1440
-and 390 against its mockup frame. Three new guards were proven red against their
-own window — and two of them failed that proof on the first attempt and were
-rewritten, which is the third recurrence in this project of "the guard I proved
-is not the guard I meant" (LEARNINGS §Testing).
+and 390 against its mockup frame; each new guard red-proved against its own
+window.
+
+Three defects were found by that red-proving rather than by review, all in work
+written during this story: two register guards that passed with the behaviour
+broken, a dialog field that would have posted an empty role because Radix
+portals content outside the row, and a never-settling test promise that silently
+broke `act()` for later tests in its file.
