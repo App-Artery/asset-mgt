@@ -245,4 +245,138 @@ describe.skipIf(!testDatabaseUrl)("asset register page (real DB)", () => {
     expect(html).toContain(inStockTag);
     expect(html).toContain(`/assets/${onOrderId}`);
   });
+
+  // AM-09 DESIGN §4.2 — the estate bar, and sort as URL state.
+  describe("estate bar and sorting", () => {
+    it("counts every status even while filtered to one of them", async () => {
+      await signInAs(Role.FINANCE);
+
+      const html = await renderRegister({ status: AssetStatus.ON_ORDER });
+
+      // The bar is how a reader gets BACK out of a filter, so it has to keep
+      // offering the statuses they are not currently looking at. Counting
+      // against the filtered set instead would leave "On order N" alone on a
+      // page with no way back — and the two WHERE clauses that make this work
+      // differ by exactly one field, which is the kind of asymmetry a later
+      // reader "fixes" (LEARNINGS §Prisma, count-query parity).
+      //
+      // Asserted on the SEGMENT labels, not on the words "Assigned"/"In stock":
+      // the chip row renders all five statuses whatever their counts, so a
+      // text assertion passes with the counts completely wrong. A segment is
+      // rendered only when its count is above zero, so its aria-label is the
+      // thing that actually disappears when this breaks. (Verified: pointing
+      // the groupBy at the filtered clause turns both of these red.)
+      expect(html).toMatch(/aria-label="Assigned, [1-9]\d* of \d+"/);
+      expect(html).toMatch(/aria-label="In stock, [1-9]\d* of \d+"/);
+      // …while the table itself really is filtered.
+      expect(html).not.toContain(inStockTag);
+    });
+
+    it("announces which status filter is active", async () => {
+      await signInAs(Role.FINANCE);
+
+      const unfiltered = await renderRegister({});
+      expect(unfiltered).not.toContain("aria-current");
+
+      const filtered = await renderRegister({ status: AssetStatus.ON_ORDER });
+      // `aria-current`, not `aria-pressed`: the chips are links, and
+      // aria-pressed carries meaning only on role="button" — so the first
+      // version of this announced the active filter as nothing at all.
+      expect(filtered).toContain('aria-current="true"');
+      expect(filtered).not.toContain("aria-pressed");
+    });
+
+    it("keeps untagged assets last in BOTH directions", async () => {
+      await signInAs(Role.FINANCE);
+
+      // Descending is the direction that matters, and it is the only one that
+      // can catch this: Postgres already sorts NULLS LAST for ASC, so an
+      // ascending-only assertion passes whether or not `nulls: "last"` is
+      // there at all — which is exactly what the first version of this test
+      // did. On DESC the default flips to NULLS FIRST, so an untagged asset
+      // jumps to the top of a register someone is scanning for a tag number.
+      for (const dir of ["asc", "desc"] as const) {
+        const html = await renderRegister({ sort: "tag", dir });
+        const untaggedAt = html.indexOf(`/assets/${onOrderId}`);
+        const taggedAt = html.indexOf(inStockTag);
+        expect(taggedAt).toBeGreaterThanOrEqual(0);
+        expect(untaggedAt).toBeGreaterThan(taggedAt);
+      }
+    });
+
+    it("reverses that order on dir=desc", async () => {
+      await signInAs(Role.FINANCE);
+
+      const ascending = await renderRegister({ sort: "tag", dir: "asc" });
+      const descending = await renderRegister({ sort: "tag", dir: "desc" });
+
+      const orderIn = (html: string) =>
+        [inStockTag, assignedTag]
+          .map((tag) => [tag, html.indexOf(tag)] as const)
+          .sort((a, b) => a[1] - b[1])
+          .map(([tag]) => tag);
+
+      expect(orderIn(descending)).toEqual([...orderIn(ascending)].reverse());
+    });
+
+    it("keeps the sort when a filter is applied, and the filter when sorted", async () => {
+      await signInAs(Role.FINANCE);
+
+      // Both params on one request is the case that breaks when a control
+      // rebuilds the query string from scratch instead of merging.
+      const html = await renderRegister({
+        status: AssetStatus.ON_ORDER,
+        sort: "site",
+        dir: "desc",
+      });
+
+      expect(html).toContain(`/assets/${onOrderId}`);
+      expect(html).not.toContain(inStockTag);
+      // The chosen column reports itself to assistive tech, and the form
+      // carries both params forward so submitting a category does not silently
+      // reset either one.
+      expect(html).toContain('aria-sort="descending"');
+      expect(html).toContain('name="sort" value="site"');
+      expect(html).toContain('name="status" value="ON_ORDER"');
+    });
+
+    it("ignores a sort column that is not offered rather than failing", async () => {
+      await signInAs(Role.STAFF_RO);
+
+      // `holder` is deliberately not sortable — the holder comes from a second
+      // query. A hand-edited link asking for it must fall back to the default
+      // column, not 500 and not silently order by something else.
+      //
+      // The direction beside it is valid and is KEPT, which is the per-field
+      // catch working: only the junk field falls back.
+      const html = await renderRegister({ sort: "holder", dir: "desc" });
+
+      expect(html).toContain(inStockTag);
+      expect(html).toContain('aria-sort="descending"');
+      // Descending on the default column, Tag — not on some other column.
+      expect(html).toMatch(
+        /Tag[\s\S]{0,120}aria-sort="descending"|aria-sort="descending"[\s\S]{0,200}Tag/,
+      );
+    });
+
+    it("drops only the junk param, keeping the valid filters beside it", async () => {
+      await signInAs(Role.FINANCE);
+
+      // One safeParse over the whole object is all-or-nothing, so a single bad
+      // param would discard every good one with it — with five params in the
+      // URL that turns a typo into "your filters silently vanished". Each
+      // field catches for itself.
+      const html = await renderRegister({
+        status: AssetStatus.ON_ORDER,
+        sort: "not-a-column",
+        dir: "sideways",
+      });
+
+      // The junk is gone…
+      expect(html).toContain('aria-sort="ascending"');
+      // …and the status the reader actually chose survived it.
+      expect(html).toContain(`/assets/${onOrderId}`);
+      expect(html).not.toContain(inStockTag);
+    });
+  });
 });

@@ -12,7 +12,8 @@ import {
   sendToRepair,
   type AssetActionState,
 } from "../actions";
-import { CONDITION_OPTIONS } from "../asset-form";
+import { CONDITION_LABELS, CONDITION_ORDER } from "@/lib/labels";
+import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
 import { ActionMessage } from "./action-message";
 import {
   AssignForm,
@@ -150,9 +151,9 @@ function ReceiveForm({ assetId }: { assetId: string }) {
           disabled={pending}
         >
           <option value="">Not recorded</option>
-          {CONDITION_OPTIONS.map((condition) => (
+          {CONDITION_ORDER.map((condition) => (
             <option key={condition} value={condition}>
-              {condition}
+              {CONDITION_LABELS[condition]}
             </option>
           ))}
         </Select>
@@ -202,9 +203,9 @@ function RepairForm({
           disabled={pending}
         >
           <option value="">Leave unchanged</option>
-          {CONDITION_OPTIONS.map((condition) => (
+          {CONDITION_ORDER.map((condition) => (
             <option key={condition} value={condition}>
-              {condition}
+              {CONDITION_LABELS[condition]}
             </option>
           ))}
         </Select>
@@ -227,46 +228,53 @@ function RepairForm({
   );
 }
 
-/** RETIRED is terminal and is the closest thing to a delete this app has. */
+/**
+ * RETIRED is terminal and is the closest thing to a delete this app has.
+ *
+ * Was a permanently-expanded form with a live red button, guarded by a
+ * `window.confirm` on submit. The confirmation survives — it is now a dialog,
+ * which can carry the reason field and the note hint that the browser's own
+ * modal could not, and can say what retiring does NOT do. Nothing here is ever
+ * deleted, and a confirmation that fails to say so invites the operator to
+ * hesitate over the one action they are allowed to take.
+ */
 function RetireForm({ assetId, isHeld }: { assetId: string; isHeld: boolean }) {
-  const [state, formAction, pending] = useActionState(retireAsset, null);
   return (
-    <form
-      action={formAction}
-      className="flex max-w-md flex-col gap-3"
-      onSubmit={(event) => {
-        if (
-          !window.confirm(
-            "Retire this asset? Retirement is permanent — the record and its history stay, but the asset cannot re-enter the register.",
-          )
-        ) {
-          event.preventDefault();
-        }
-      }}
+    <ConfirmActionDialog
+      action={retireAsset}
+      hiddenFields={{ assetId }}
+      trigger={
+        // Not destructive-red. Red is for confirming, never for offering —
+        // the colour appears on the confirm button inside the dialog.
+        <Button type="button" variant="outline" className="w-fit">
+          Retire asset…
+        </Button>
+      }
+      title="Retire this asset?"
+      description={
+        <>
+          <p>
+            It leaves the active register and stays in it forever — retired
+            assets are never deleted, and this page keeps working.
+          </p>
+          {isHeld ? (
+            <p className="mt-2">
+              It is still out with someone. Retiring closes that assignment for
+              you: stolen and lost kit must be retirable without first recording
+              a return that never happened.
+            </p>
+          ) : null}
+        </>
+      }
+      confirmLabel="Retire asset"
+      pendingLabel="Retiring…"
+      destructive
     >
-      <h3 className="font-medium">Retire</h3>
-      <input type="hidden" name="assetId" value={assetId} />
-      {isHeld ? (
-        <p className="text-muted-foreground text-sm">
-          This asset is still out with someone. Retiring it closes the
-          assignment for you — stolen and lost kit must be retirable without
-          first recording a return that never happened.
-        </p>
-      ) : null}
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="retire-notes">Reason</Label>
-        <Input id="retire-notes" name="notes" disabled={pending} />
+        <Input id="retire-notes" name="notes" />
         <EventNoteHint />
       </div>
-      <Button
-        type="submit"
-        variant="destructive"
-        disabled={pending}
-        className="w-fit"
-      >
-        {pending ? "Retiring…" : "Retire asset"}
-      </Button>
-      <ActionMessage state={state} />
-    </form>
+    </ConfirmActionDialog>
   );
 }

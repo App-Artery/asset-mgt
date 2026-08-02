@@ -29,6 +29,11 @@
   --color-st-repair-bg: var(--st-repair-bg);
   --color-st-inert: var(--st-inert);
   --color-st-inert-bg: var(--st-inert-bg);
+  --color-st-fill-stock: var(--st-fill-stock);
+  --color-st-fill-assigned: var(--st-fill-assigned);
+  --color-st-fill-repair: var(--st-fill-repair);
+  --color-st-fill-inert: var(--st-fill-inert);
+  --color-st-fill-order: var(--st-fill-order);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --radius-sm: calc(var(--radius) - 4px);
@@ -72,6 +77,24 @@
   --st-repair-bg: oklch(0.95 0.05 80);
   --st-inert: oklch(0.55 0 0);
   --st-inert-bg: oklch(0.97 0 0);
+
+  /* Estate-bar fills (AM-09 DESIGN §4.2). SEPARATE from the chip tokens above
+     because the chip tokens are tuned for a 6px dot beside a text label, and a
+     full-width band is neither.
+
+     Run through the palette validator the five status hues FAIL as adjacent
+     fills: green↔amber sits at ΔE 4.5 under protanopia and grey↔amber at 11.8
+     for normal vision, below the legibility floor. So the band carries
+     proportion only — identity lives in the labelled chips beneath it, every
+     segment is separated by a 2px gap, and ON_ORDER is told from RETIRED by a
+     hatch rather than a hue, which is the same texture-not-colour rule the chip
+     already uses for its dashed dot. Never add a sixth fill without re-running
+     that check. */
+  --st-fill-stock: var(--st-stock);
+  --st-fill-assigned: var(--st-assigned);
+  --st-fill-repair: var(--st-repair);
+  --st-fill-inert: var(--st-inert);
+  --st-fill-order: oklch(0.78 0 0);
 }
 
 .dark {
@@ -104,6 +127,15 @@
   --st-repair-bg: oklch(0.33 0.05 70);
   --st-inert: oklch(0.68 0 0);
   --st-inert-bg: oklch(0.26 0 0);
+
+  /* Selected, not inverted. The chip tokens above sit at L≈0.8 because a 6px
+     dot on near-black needs that much lift; the same value across a full-width
+     band glows. These step down to roughly the chip-background lightness. */
+  --st-fill-stock: oklch(0.55 0.11 155);
+  --st-fill-assigned: oklch(0.53 0.12 255);
+  --st-fill-repair: oklch(0.58 0.1 70);
+  --st-fill-inert: oklch(0.36 0 0);
+  --st-fill-order: oklch(0.45 0 0);
 }
 
 @layer base {

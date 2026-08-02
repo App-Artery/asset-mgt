@@ -7,8 +7,9 @@ import {
   type Prisma,
   type PrismaClient,
 } from "@prisma/client";
-import { ASSET_TRANSITIONS, STATUS_LABELS } from "@/lib/asset-lifecycle";
+import { ASSET_TRANSITIONS } from "@/lib/asset-lifecycle";
 import { requireRole } from "@/lib/authz";
+import { CONDITION_LABELS } from "@/lib/labels";
 import { getDb } from "@/lib/db";
 import { canViewAssignments, personSelectFor } from "@/lib/person-visibility";
 import {
@@ -19,7 +20,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { relativeTime } from "@/lib/relative-time";
+import { StatusChip } from "@/components/ui/status-chip";
 import { AssetForm } from "../asset-form";
+import { EditDetails } from "./edit-details";
+import { HistoryTimeline } from "./history-timeline";
 import type { PickerPerson, ReturnDestination } from "./assignment-actions";
 import { LifecycleActions, type LifecycleMove } from "./lifecycle-actions";
 
@@ -79,9 +84,41 @@ function toDateInput(value: Date | null): string {
   return value ? value.toISOString().slice(0, 10) : "";
 }
 
-/** A CREATED event has no fromStatus; an UPDATED event has neither. */
-function statusLabel(status: AssetStatus | null): string {
-  return status ? STATUS_LABELS[status] : "—";
+/**
+ * A date to read, not to re-enter. `toDateInput`'s YYYY-MM-DD is the format an
+ * <input type="date"> requires and it leaked into the display grid, where
+ * "2026-06-21" is worse than "21 Jun 2026" for the one job it has.
+ *
+ * Explicit en-GB and UTC: the server's locale is not the reader's, and a
+ * purchase date that shifts by a day depending on who is looking is a
+ * reconciliation bug waiting to happen.
+ */
+const DATE_FORMAT = new Intl.DateTimeFormat("en-GB", {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+  timeZone: "UTC",
+});
+
+function toDisplayDate(value: Date | null): string | null {
+  return value ? DATE_FORMAT.format(value) : null;
+}
+
+/**
+ * Money, grouped and to two places — but with no currency symbol, because the
+ * schema does not record one. `Asset.purchasePrice` is a bare Decimal, so
+ * printing "KES" here would be the UI inventing a fact the data does not hold.
+ * Grouping is the honest half of the improvement: 120750 vs 120,750.00.
+ */
+function toDisplayPrice(value: string): string | null {
+  if (!value) return null;
+  const amount = Number(value);
+  return Number.isFinite(amount)
+    ? amount.toLocaleString("en-GB", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })
+    : value;
 }
 
 /** Deterministic and timezone-explicit — the server's locale is not the reader's. */
@@ -259,92 +296,171 @@ export default async function AssetDetailPage({
   // convert before it reaches any client component.
   const purchasePrice = asset.purchasePrice?.toString() ?? "";
 
+  // One clock for the whole page: two entries disagreeing about "now" is a
+  // real bug, and it only appears when the render straddles a boundary.
+  const now = new Date();
+
+  // An empty optional reads "Not recorded", never an em-dash. A dash is what a
+  // broken renderer produces; the words say the field is genuinely blank, which
+  // for purchase data is information finance acts on.
+  const detailFields = (
+    <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
+      <Field label="Category" value={asset.category.name} />
+      <Field label="Serial" value={asset.serial} mono />
+      <Field label="Site" value={asset.site?.name ?? null} />
+      <Field
+        label="Condition"
+        value={asset.condition ? CONDITION_LABELS[asset.condition] : null}
+      />
+      <Field label="Supplier" value={asset.supplier} />
+      <Field label="Purchased" value={toDisplayDate(asset.purchasedAt)} />
+      <Field
+        label="Purchase price"
+        value={toDisplayPrice(purchasePrice)}
+        mono
+      />
+      <Field
+        label="Warranty until"
+        value={toDisplayDate(asset.warrantyUntil)}
+      />
+    </dl>
+  );
+
   return (
     <>
-      <h1 className="font-mono text-2xl font-semibold tracking-tight tabular-nums">
-        {asset.tag ?? "Untagged asset"}
-      </h1>
+      {/* Somewhere to go back to. The detail page had no route out except the
+          rail, which is a dead end on a phone. */}
+      <nav className="text-muted-foreground -mb-2 text-sm">
+        <Link href="/assets" className="underline underline-offset-4">
+          Register
+        </Link>
+        <span aria-hidden="true"> › </span>
+        <span>{asset.tag ?? "Untagged"}</span>
+      </nav>
 
-      <dl className="grid grid-cols-2 gap-x-8 gap-y-3 text-sm sm:grid-cols-3">
-        <Field label="Status" value={STATUS_LABELS[asset.status]} />
-        <Field label="Make / model" value={`${asset.make} ${asset.model}`} />
-        <Field label="Category" value={asset.category.name} />
-        <Field label="Serial" value={asset.serial} />
-        <Field label="Site" value={asset.site?.name ?? null} />
-        <Field label="Condition" value={asset.condition} />
-        <Field label="Supplier" value={asset.supplier} />
-        <Field label="Purchased" value={toDateInput(asset.purchasedAt)} />
-        <Field label="Purchase price" value={purchasePrice} />
-        <Field
-          label="Warranty until"
-          value={toDateInput(asset.warrantyUntil)}
-        />
-        {canSeeHolders ? (
-          <div>
-            <dt className="text-muted-foreground text-xs">Held by</dt>
-            <dd>
+      {/* The tag is this page's proper noun, and the status is the one fact
+          that changes what you can do next — so they lead, together. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <h1 className="font-mono text-2xl font-semibold tracking-tight tabular-nums">
+          {asset.tag ?? "Untagged asset"}
+        </h1>
+        <StatusChip status={asset.status} />
+        <p className="text-muted-foreground w-full text-sm">
+          {asset.make} {asset.model} · {asset.category.name}
+        </p>
+      </div>
+
+      <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">
+        <div className="flex min-w-0 flex-col gap-8">
+          {canSeeHolders ? (
+            <section className="flex flex-col gap-3">
+              <h2 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                Custody
+              </h2>
+              {/* Out of the field grid, where it was the eleventh of eleven
+                  entries, and into the page's second element: "who has this"
+                  is the question the register exists to answer. */}
               {holder ? (
-                <Link
-                  href={`/people/${holder.person.id}`}
-                  className="underline underline-offset-4"
-                >
-                  {holder.person.name}
-                  {holder.person.employeeRef
-                    ? ` (${holder.person.employeeRef})`
-                    : ""}
-                </Link>
+                <div className="flex items-center gap-3 rounded-lg border p-3">
+                  <span
+                    aria-hidden="true"
+                    className="bg-muted text-muted-foreground grid size-9 shrink-0 place-items-center rounded-full text-xs font-semibold"
+                  >
+                    {initials(holder.person.name)}
+                  </span>
+                  <span className="min-w-0">
+                    <Link
+                      href={`/people/${holder.person.id}`}
+                      className="font-medium underline underline-offset-4"
+                    >
+                      {holder.person.name}
+                    </Link>
+                    <span className="text-muted-foreground block text-xs">
+                      {[
+                        holder.person.employeeRef,
+                        `held ${relativeTime(holder.checkedOutAt, now).replace(" ago", "")}`,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
+                  </span>
+                </div>
               ) : (
-                "—"
+                <p className="text-muted-foreground text-sm">
+                  Not with anyone right now.
+                </p>
               )}
-            </dd>
-          </div>
-        ) : null}
-      </dl>
+            </section>
+          ) : null}
 
-      {canWrite ? (
-        <>
-          {/* Rendered for write roles only — but that is UX. requireRole
-              inside each action is what enforces it. */}
-          <section className="flex flex-col gap-4">
-            <h2 className="text-lg font-medium">Lifecycle</h2>
-            <LifecycleActions
-              assetId={asset.id}
-              moves={moves}
-              people={people}
-              returnDestinations={returnDestinationsFor(asset.status)}
-            />
-          </section>
-          <section className="flex flex-col gap-4">
-            <h2 className="text-lg font-medium">Edit details</h2>
-            <p className="text-muted-foreground text-sm">
-              Status is not editable here — it only ever changes through a
-              lifecycle action, so every change lands in the history below.
-            </p>
-            <AssetForm
-              categories={categories}
-              sites={sites}
-              asset={{
-                id: asset.id,
-                tag: asset.tag ?? "",
-                categoryId: asset.categoryId,
-                make: asset.make,
-                model: asset.model,
-                serial: asset.serial ?? "",
-                purchasedAt: toDateInput(asset.purchasedAt),
-                purchasePrice,
-                supplier: asset.supplier ?? "",
-                warrantyUntil: toDateInput(asset.warrantyUntil),
-                condition: asset.condition ?? "",
-                siteId: asset.siteId ?? "",
-              }}
-            />
-          </section>
-        </>
-      ) : null}
+          {canWrite ? (
+            /* Rendered for write roles only — but that is UX. requireRole
+               inside each action is what enforces it. */
+            <section className="flex flex-col gap-3">
+              <h2 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                Lifecycle
+              </h2>
+              <LifecycleActions
+                assetId={asset.id}
+                moves={moves}
+                people={people}
+                returnDestinations={returnDestinationsFor(asset.status)}
+              />
+            </section>
+          ) : null}
+
+          {canWrite ? (
+            <EditDetails summary={detailFields}>
+              <AssetForm
+                categories={categories}
+                sites={sites}
+                asset={{
+                  id: asset.id,
+                  tag: asset.tag ?? "",
+                  categoryId: asset.categoryId,
+                  make: asset.make,
+                  model: asset.model,
+                  serial: asset.serial ?? "",
+                  purchasedAt: toDateInput(asset.purchasedAt),
+                  purchasePrice,
+                  supplier: asset.supplier ?? "",
+                  warrantyUntil: toDateInput(asset.warrantyUntil),
+                  condition: asset.condition ?? "",
+                  siteId: asset.siteId ?? "",
+                }}
+              />
+            </EditDetails>
+          ) : (
+            <section className="flex flex-col gap-3">
+              <h2 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                Details
+              </h2>
+              {detailFields}
+            </section>
+          )}
+        </div>
+
+        <section className="flex min-w-0 flex-col gap-3 lg:border-l lg:pl-8">
+          <div className="flex items-baseline gap-2">
+            <h2 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+              History
+            </h2>
+            <span className="text-muted-foreground font-mono text-xs tabular-nums">
+              {history.length}
+            </span>
+          </div>
+          <HistoryTimeline entries={history} now={now} />
+          <p className="text-muted-foreground text-xs">
+            Append-only. Corrections are new entries.
+          </p>
+        </section>
+      </div>
 
       {canSeeHolders ? (
-        <section className="flex flex-col gap-4">
-          <h2 className="text-lg font-medium">Holders</h2>
+        <section className="flex flex-col gap-3">
+          <h2 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+            Every holder
+          </h2>
           {assignments.length === 0 ? (
             <p className="text-muted-foreground text-sm">
               This asset has never been assigned.
@@ -395,47 +511,44 @@ export default async function AssetDetailPage({
           )}
         </section>
       ) : null}
-
-      <section className="flex flex-col gap-4">
-        <h2 className="text-lg font-medium">History</h2>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>When</TableHead>
-              <TableHead>Event</TableHead>
-              <TableHead>Change</TableHead>
-              <TableHead>Who</TableHead>
-              <TableHead>Notes</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {history.map((event) => (
-              <TableRow key={event.id}>
-                <TableCell>{formatTimestamp(event.at)}</TableCell>
-                <TableCell>{event.type}</TableCell>
-                <TableCell>
-                  {event.fromStatus || event.toStatus
-                    ? `${statusLabel(event.fromStatus)} → ${statusLabel(event.toStatus)}`
-                    : "—"}
-                </TableCell>
-                <TableCell>{event.who}</TableCell>
-                <TableCell className="whitespace-normal">
-                  {event.notes ?? "—"}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </section>
     </>
   );
 }
 
-function Field({ label, value }: { label: string; value: string | null }) {
+function Field({
+  label,
+  value,
+  mono,
+}: {
+  label: string;
+  value: string | null;
+  /** Identifiers and figures, which want tabular digits and a fixed advance. */
+  mono?: boolean;
+}) {
   return (
-    <div>
+    <div className="min-w-0">
       <dt className="text-muted-foreground text-xs">{label}</dt>
-      <dd>{value ? value : "—"}</dd>
+      <dd
+        className={
+          value
+            ? mono
+              ? "font-mono text-sm tabular-nums"
+              : undefined
+            : "text-muted-foreground"
+        }
+      >
+        {value ? value : "Not recorded"}
+      </dd>
     </div>
   );
+}
+
+/** Up to two initials, for the custody avatar. Decorative and aria-hidden. */
+function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
 }

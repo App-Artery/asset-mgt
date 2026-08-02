@@ -5,18 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
+import { CONDITION_LABELS, CONDITION_ORDER } from "@/lib/labels";
 import { createAsset, updateAsset } from "./actions";
 
-// Enum vocabularies hardcoded rather than imported from @prisma/client so no
-// Prisma runtime reaches the client bundle (same rule as ROLE_OPTIONS). The
-// server action re-validates against the real enum regardless.
-export const CONDITION_OPTIONS = [
-  "NEW",
-  "GOOD",
-  "FAIR",
-  "POOR",
-  "DEFECTIVE",
-] as const;
+// CONDITION_ORDER comes from @/lib/labels, whose only Prisma import is a TYPE —
+// so the original constraint still holds: no Prisma runtime reaches the client
+// bundle. What changed is that the tuple is no longer a second, unchecked copy
+// of the enum living in a form (AM-09 DESIGN §4.1). The server action
+// re-validates against the real enum regardless.
 
 /** The only statuses an asset may be created in — see INITIAL_ASSET_STATUSES. */
 const INITIAL_STATUS_OPTIONS = [
@@ -206,9 +202,9 @@ export function AssetForm({
             disabled={pending}
           >
             <option value="">Not recorded</option>
-            {CONDITION_OPTIONS.map((condition) => (
+            {CONDITION_ORDER.map((condition) => (
               <option key={condition} value={condition}>
-                {condition}
+                {CONDITION_LABELS[condition]}
               </option>
             ))}
           </Select>

@@ -1,6 +1,7 @@
 import type { Role } from "@prisma/client";
 
 import { signOut } from "@/auth";
+import { ROLE_LABELS } from "@/lib/labels";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 
@@ -46,8 +47,10 @@ export function AppBar({ name, role }: { name: string; role: Role }) {
           </span>
           <span className="hidden text-sm sm:inline">{name}</span>
         </span>
-        <span className="text-muted-foreground rounded border px-1.5 py-0.5 font-mono text-[0.65rem]">
-          {role}
+        {/* Prose, not the enum, and so no longer mono: the chip names what this
+            person is allowed to do, and `STAFF_RO` named a database value. */}
+        <span className="text-muted-foreground rounded-full border px-2 py-0.5 text-xs">
+          {ROLE_LABELS[role]}
         </span>
         <form
           action={async () => {

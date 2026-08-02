@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { conditionNotesRequiredFor } from "@/lib/asset-lifecycle";
 import { assignAssetToPerson, returnAssetFromPerson } from "../actions";
-import { CONDITION_OPTIONS } from "../asset-form";
+import { CONDITION_LABELS, CONDITION_ORDER } from "@/lib/labels";
 import { ActionMessage } from "./action-message";
 
 /**
@@ -34,7 +34,7 @@ const DESTINATION_LABELS: Record<ReturnDestination, string> = {
   IN_REPAIR: "Straight to repair",
 };
 
-type ConditionOption = (typeof CONDITION_OPTIONS)[number];
+type ConditionOption = (typeof CONDITION_ORDER)[number];
 
 /** IN_STOCK -> ASSIGNED. Opens the assignment; the picker is over existing Person rows. */
 export function AssignForm({
@@ -169,9 +169,9 @@ export function ReturnFromPersonForm({
           required
           disabled={pending}
         >
-          {CONDITION_OPTIONS.map((option) => (
+          {CONDITION_ORDER.map((option) => (
             <option key={option} value={option}>
-              {option}
+              {CONDITION_LABELS[option]}
             </option>
           ))}
         </Select>

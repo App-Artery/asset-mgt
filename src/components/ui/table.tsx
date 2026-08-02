@@ -5,11 +5,23 @@ import { cn } from "@/lib/utils";
 // Hand-written shadcn-style table primitives (scaffold pattern — no shadcn
 // CLI). The wrapper div owns horizontal overflow so wide tables never
 // scroll the page body.
-function Table({ className, ...props }: React.ComponentProps<"table">) {
+//
+// `containerClassName` exists for one reason: `overflow-x-auto` makes this div
+// a scroll container on BOTH axes (CSS computes a `visible` axis to `auto` when
+// its partner is not), so a `sticky` header inside it anchors to this div and
+// not to the viewport. A caller that wants a sticky header must therefore give
+// the container a height to scroll within — see the register (AM-09 DESIGN
+// §4.2). Passing layout classes here is the only supported way to do that;
+// removing the wrapper would put the horizontal scroll back on the page body.
+function Table({
+  className,
+  containerClassName,
+  ...props
+}: React.ComponentProps<"table"> & { containerClassName?: string }) {
   return (
     <div
       data-slot="table-container"
-      className="relative w-full overflow-x-auto"
+      className={cn("relative w-full overflow-x-auto", containerClassName)}
     >
       <table
         data-slot="table"
