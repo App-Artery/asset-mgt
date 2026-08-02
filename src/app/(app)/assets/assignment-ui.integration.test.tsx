@@ -60,6 +60,7 @@ describe.skipIf(!testDatabaseUrl)("asset assignment UI (real DB)", () => {
   let assignedAssetId: string;
   let stockAssetId: string;
   let assignedTag: string;
+  let categoryId: string;
   const personName = `Holder ${randomUUID()}`;
   const personEmail = `holder-${randomUUID()}@example.com`;
   const personRef = `EMP-${randomUUID().slice(0, 8)}`;
@@ -91,6 +92,7 @@ describe.skipIf(!testDatabaseUrl)("asset assignment UI (real DB)", () => {
     const category = await db.category.create({
       data: { name: `Assignment UI ${randomUUID()}` },
     });
+    categoryId = category.id;
     const person = await db.person.create({
       data: { name: personName, email: personEmail, employeeRef: personRef },
     });
@@ -173,8 +175,14 @@ describe.skipIf(!testDatabaseUrl)("asset assignment UI (real DB)", () => {
 
   const renderDetail = (id: string) =>
     record(AssetDetailPage({ params: Promise.resolve({ id }) }));
+  // Scoped to this file's own category. The register paginates at 50 rows
+  // (AM-07), and this database is never truncated — so an unfiltered render
+  // returns page 1 of thousands and the fixtures are not on it. That turned
+  // the ADMIN_IT twin below red, which is the useful direction: had it been
+  // the STAFF_RO assertions that stopped reaching their fixtures, they would
+  // have gone on passing while proving nothing at all.
   const renderRegister = () =>
-    record(AssetsPage({ searchParams: Promise.resolve({}) }));
+    record(AssetsPage({ searchParams: Promise.resolve({ categoryId }) }));
 
   describe("STAFF_RO", () => {
     it("fetches no assignment and no person data on the asset detail page", async () => {

@@ -15,6 +15,7 @@ import { Select } from "@/components/ui/select";
 import { StatusChip } from "@/components/ui/status-chip";
 import { EstateBar, type EstateCounts } from "@/components/estate-bar";
 import { AssetCardList } from "./asset-card-list";
+import { RegisterPager } from "./register-pager";
 import {
   Table,
   TableBody,
@@ -155,7 +156,31 @@ const filterSchema = z.object({
     blankToUndefined,
     z.enum(["asc", "desc"]).optional().catch(undefined),
   ),
+  // Coerced, because a query string only ever carries text. `.int().min(1)`
+  // is the floor: "0", "-3", "2.7", "abc", a repeated param arriving as an
+  // array, and Infinity all fall through to undefined and therefore to page 1
+  // — none of them reaches `skip`. `.int()` also rejects anything outside the
+  // safe-integer range, so a hand-edited `?page=99999999999999999999` cannot
+  // hand Postgres a nonsense OFFSET.
+  //
+  // This only floors the page. It cannot CEIL it, because the last page is not
+  // known until the count comes back — `?page=999` is parsed as 999 here and
+  // clamped after the query below.
+  page: z.preprocess(
+    blankToUndefined,
+    z.coerce.number().int().min(1).optional().catch(undefined),
+  ),
 });
+
+/**
+ * Rows per page.
+ *
+ * The client's Asset Tiger export is ~400 assets, so 50 is eight pages of a
+ * register someone scans rather than reads — enough that paging is rare, few
+ * enough that the page stays a page (issue #8 measured 402 rows as 15,965px
+ * of scroll and 10,481 DOM nodes).
+ */
+const PAGE_SIZE = 50;
 
 export default async function AssetsPage({
   searchParams,
@@ -200,10 +225,17 @@ export default async function AssetsPage({
   const sortDirection = filters.dir ?? "asc";
 
   const db = getDb();
-  const [assets, statusCounts, categories, sites] = await Promise.all([
+  const requestedPage = filters.page ?? 1;
+
+  // One definition of a page of rows, so the out-of-range retry below cannot
+  // drift from the first attempt — a second hand-written findMany is exactly
+  // how a retry ends up with a different select or a different orderBy.
+  const pageOfAssets = (page: number) =>
     db.asset.findMany({
       where,
       orderBy: orderByFor(sortColumn, sortDirection),
+      skip: (page - 1) * PAGE_SIZE,
+      take: PAGE_SIZE,
       select: {
         id: true,
         tag: true,
@@ -214,15 +246,55 @@ export default async function AssetsPage({
         category: { select: { name: true } },
         site: { select: { name: true } },
       },
-    }),
-    db.asset.groupBy({
-      by: ["status"],
-      where: scopeFilters,
-      _count: { _all: true },
-    }),
-    db.category.findMany({ orderBy: { name: "asc" } }),
-    db.site.findMany({ orderBy: { name: "asc" } }),
-  ]);
+    });
+
+  const [requestedAssets, total, statusCounts, categories, sites] =
+    await Promise.all([
+      pageOfAssets(requestedPage),
+      // THE SAME `where` OBJECT the findMany above reads — not a copy, not a
+      // rebuild. A count computed against a different clause makes "51–100 of
+      // N" a lie, and it survives review because both halves look right on
+      // their own (LEARNINGS §Prisma, count-query parity). Sharing the
+      // identifier is what makes the parity checkable at a glance.
+      //
+      // This is NOT the `scopeFilters` the estate bar counts against below.
+      // That asymmetry is deliberate and documented above; this one would be a
+      // bug.
+      db.asset.count({ where }),
+      db.asset.groupBy({
+        by: ["status"],
+        where: scopeFilters,
+        _count: { _all: true },
+      }),
+      db.category.findMany({ orderBy: { name: "asc" } }),
+      db.site.findMany({ orderBy: { name: "asc" } }),
+    ]);
+
+  // Clamped AFTER the count, because the last page is not knowable before it.
+  // Max(1, …) so an empty register is page 1 of 1 rather than page 1 of 0.
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  // Out of range falls back to page 1 — NOT to the last page. `Math.min` was
+  // the first spelling here and it is wrong: it answers `?page=999` on a
+  // three-page register with page 3, silently teleporting a reader to rows
+  // they did not ask for and cannot tell are not what they requested. An
+  // out-of-range page is a broken link, and page 1 is where every other reset
+  // on this page already sends you — changing the sort, the status or a
+  // filter. One answer to "this view is not where you thought you were".
+  const page = requestedPage > pageCount ? 1 : requestedPage;
+
+  // `?page=999` on a three-page register renders page 1, not an empty table.
+  //
+  // Re-queried rather than redirected. `redirect()` would leave the URL
+  // honest, but it throws NEXT_REDIRECT out of the component — so the "renders
+  // page 1" acceptance criterion would become "throws a control-flow
+  // exception", untestable at this seam and a worse experience on a stale
+  // bookmark than simply showing the register. Cost is one extra query on a
+  // path only a hand-edited or stale link reaches; the in-range path, which is
+  // every real page view, still costs exactly one round trip because the count
+  // rides along in the Promise.all above rather than gating it.
+  const assets =
+    page === requestedPage ? requestedAssets : await pageOfAssets(page);
 
   // groupBy omits statuses with no rows; the bar needs all five present, so a
   // zero is a real answer ("nothing is in repair") rather than a missing key.
@@ -242,6 +314,11 @@ export default async function AssetsPage({
   // that matters most — the one where nothing person-shaped is fetched — is
   // then the hardest to read. One extra query, and the STAFF_RO path never
   // touches the Assignment or Person tables.
+  //
+  // Scoped to `assets`, which is the CLAMPED page — so this became page-sized
+  // (at most PAGE_SIZE ids) for free when pagination landed. It must stay
+  // below the clamp: reading `requestedAssets` here would fetch holders for a
+  // page that is not the one being rendered.
   const holders =
     canSeeHolders && assets.length > 0
       ? await db.assignment.findMany({
@@ -270,17 +347,28 @@ export default async function AssetsPage({
   // (LEARNINGS §Testing: a secondary guard behind a working primary defends
   // nothing you can demonstrate). The guard is the fetch, and only the fetch:
   // data that was never selected cannot leak through any later UI change.
-  // Counted from the rows already fetched, not with three more COUNT queries:
-  // the register is a page-sized list, so the arithmetic is free here and a
-  // round trip there. Singular/plural matters — "1 assets" reads as a bug.
-  // Singular/plural matters — "1 assets" reads as a bug. When a filter is on,
-  // the count says what it is a subset OF, so the number never looks like the
-  // whole register.
+  // `total`, never `assets.length`. Before pagination those were the same
+  // number and this read from the rendered rows; now `assets.length` is at
+  // most PAGE_SIZE, so the old arithmetic would have quietly relabelled a
+  // 402-asset register as "50 of 402" — the header's job is to say how much
+  // there IS, and the footer's is to say which slice you are on.
+  //
+  // `estateTotal` sums the estate bar's counts, which are taken against
+  // `scopeFilters` — everything except the status filter. So `isFiltered` is
+  // true exactly when a status is narrowing the set, and the header then says
+  // what the number is a subset OF rather than looking like the whole
+  // register. Singular/plural matters: "1 assets" reads as a bug.
   const estateTotal = Object.values(counts).reduce((sum, n) => sum + n, 0);
-  const isFiltered = assets.length !== estateTotal;
+  const isFiltered = total !== estateTotal;
   const summary = isFiltered
-    ? `${assets.length} of ${estateTotal}`
-    : `${assets.length} ${assets.length === 1 ? "asset" : "assets"}`;
+    ? `${total} of ${estateTotal}`
+    : `${total} ${total === 1 ? "asset" : "assets"}`;
+
+  // 1-based and inclusive, because the footer is read by a person. Zero rows
+  // is the one case where a "start" would be a fiction, and the empty state
+  // below owns that case anyway.
+  const rangeStart = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const rangeEnd = (page - 1) * PAGE_SIZE + assets.length;
 
   const rows = assets.map((asset) => ({
     id: asset.id,
@@ -307,6 +395,17 @@ export default async function AssetsPage({
       siteId: filters.siteId ?? null,
       sort: filters.sort ?? null,
       dir: filters.dir ?? null,
+      // The CLAMPED page, not `filters.page`: a reader who arrived on
+      // `?page=999` and is being shown page 1 must not have 999 threaded back
+      // into every link on the screen. Page 1 is the absence of the param, so
+      // the default register keeps a bare `/assets` URL.
+      //
+      // Carried by default and reset EXPLICITLY at each control below, rather
+      // than omitted here and added where wanted. Both spellings produce the
+      // same URLs today; this one makes "does this control reset the page?" a
+      // question with a visible answer at every call site, instead of one
+      // answered by the absence of a line.
+      page: page > 1 ? String(page) : null,
       ...overrides,
     };
     for (const [key, value] of Object.entries(merged)) {
@@ -322,7 +421,15 @@ export default async function AssetsPage({
       // Clicking the active column flips it; clicking a new one starts
       // ascending, which is the reading order for every column here.
       dir: column === sortColumn && sortDirection === "asc" ? "desc" : "asc",
+      // Re-sorting reorders every row, so page 3 of the old order has nothing
+      // to do with page 3 of the new one. Changing what you are looking at
+      // returns you to the start of it.
+      page: null,
     });
+
+  /** Movement WITHIN the current view, so this is the one control that keeps it. */
+  const pageHref = (target: number) =>
+    hrefWith({ page: target > 1 ? String(target) : null });
 
   return (
     <>
@@ -361,14 +468,23 @@ export default async function AssetsPage({
       <EstateBar
         counts={counts}
         active={filters.status ?? null}
-        hrefFor={(status) => hrefWith({ status })}
+        // `page: null` — changing the status changes the set, so page 3 of the
+        // old set is meaningless in the new one and would often be past its
+        // end. Same rule as the sort headers.
+        hrefFor={(status) => hrefWith({ status, page: null })}
       />
 
       {/* A plain GET form: filters live in the URL, so a filtered register is
           a shareable link and the page stays a server component.
           `sort`/`dir` ride along as hidden inputs — without them, submitting
           the category filter would silently reset a chosen sort, and status
-          would be dropped entirely because the bar owns it now. */}
+          would be dropped entirely because the bar owns it now.
+
+          There is deliberately NO hidden `page` input, and adding one would be
+          a bug. A GET form submits its fields and nothing else, so the absence
+          of the input IS the reset: choosing a different category drops you
+          back to page 1 of the new set, which is the only page guaranteed to
+          exist in it. */}
       <form method="get" className="flex flex-wrap items-end gap-3">
         {filters.status ? (
           <input type="hidden" name="status" value={filters.status} />
@@ -540,6 +656,18 @@ export default async function AssetsPage({
 
           {/* Below md: one card per asset, tag first (AM-06). */}
           <AssetCardList assets={rows} />
+
+          {/* Outside the breakpoint pair on purpose: one footer for both
+              shapes, so the range a phone reads and the range a desktop reads
+              cannot disagree. */}
+          <RegisterPager
+            page={page}
+            pageCount={pageCount}
+            rangeStart={rangeStart}
+            rangeEnd={rangeEnd}
+            total={total}
+            hrefForPage={pageHref}
+          />
         </>
       )}
     </>
