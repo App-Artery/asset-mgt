@@ -29,7 +29,16 @@ describe.skipIf(!testDatabaseUrl)("sign-in policy (real DB)", () => {
     });
     db = new PrismaClient({ datasourceUrl: testDatabaseUrl });
     // Clear leftover tokens from previous local runs so the global-window
-    // count starts from a known state (only this file writes tokens).
+    // count starts from a known state. The throttle's caps are global, so
+    // there is no scoped `where` that would do — this has to be the whole
+    // table.
+    //
+    // It is therefore NOT true any more that only this file writes tokens:
+    // src/app/(app)/admin/users/page.integration.test.tsx creates them too
+    // (issue #11). That file is written to survive this line — every fixture
+    // it uses is created inside the test that reads it — and this one is
+    // unaffected by its leftovers, because this wipe runs first. Keep both
+    // halves of that arrangement if either file changes.
     await db.verificationToken.deleteMany({});
   });
 

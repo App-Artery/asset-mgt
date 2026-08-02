@@ -14,6 +14,28 @@ schema has **no national-ID column anywhere** (Discovery Brief §7.3) and must
 never gain one; `employeeRef` is the organisation's own employee number.
 Auth flow additionally processes the staff email for magic-link delivery.
 
+**Auth activity data.** For staff who also have an account, the register holds
+two timestamps about the act of signing in. Neither is a new field and neither
+is a new transfer — both are written by the authentication mechanism already
+described above — but they are recorded here because they are now **displayed**
+rather than merely stored, which is the trigger in "Reviewing this note if
+scope changes" below:
+
+- `User.emailVerified` — written by the Auth.js adapter on every successful
+  magic-link redemption, so in practice it is the time of that person's **last
+  sign-in**.
+- `VerificationToken.createdAt` — when a magic link was last **issued** for an
+  address, held only for links that have not been redeemed (a redeemed link's
+  row is deleted). The link token itself is never read for display.
+
+Both are shown on `/admin/users`, and only there, so an IT admin can tell an
+account whose invitation never arrived from one nobody has invited yet.
+**Retention:** no per-sign-in history is kept — each is a single timestamp,
+overwritten in place, and nothing about sign-in activity is written to the
+append-only `UserEvent` table, where it would be permanently uncorrectable and
+unerasable. Engineering change of 2026-08-02 (issue #11); no legal review is
+implied.
+
 ## Where it is processed
 
 | Processor | Role                                       | Location                                 |
@@ -46,17 +68,27 @@ outside Kenya** under **sections 48–49 of the Data Protection Act, 2019**.
   (`personSelectFor(role)`, `src/lib/person-visibility.ts`) and enforced in
   the database `select`, so a role that may not see a field is never sent it:
 
-  | Field                | ADMIN_IT | PROCUREMENT | FINANCE | STAFF_RO |
-  | -------------------- | -------- | ----------- | ------- | -------- |
-  | `Person.name`        | yes      | yes         | yes     | own only |
-  | `Person.employeeRef` | yes      | yes         | yes     | no       |
-  | `Person.email`       | yes      | no          | no      | no       |
+  | Field                         | ADMIN_IT | PROCUREMENT | FINANCE | STAFF_RO |
+  | ----------------------------- | -------- | ----------- | ------- | -------- |
+  | `Person.name`                 | yes      | yes         | yes     | own only |
+  | `Person.employeeRef`          | yes      | yes         | yes     | no       |
+  | `Person.email`                | yes      | no          | no      | no       |
+  | `User.emailVerified`          | yes      | no          | no      | no       |
+  | `VerificationToken.createdAt` | yes      | no          | no      | no       |
 
   The **set of stored personal-data fields does not change**, so this is
   **not a new transfer**. It is recorded here because the "Reviewing this
   note if scope changes" clause below is triggered by a change in how the
   data is displayed, and widening any cell in the table triggers it again.
   Engineering change of 2026-07-30; no legal review is implied.
+
+  The last two rows are the auth activity timestamps described above, added
+  2026-08-02 (issue #11). They are read on `/admin/users` and nowhere else,
+  behind `requireRole("ADMIN_IT")` — the only role that can already see every
+  staff email — so no role gains sight of a person it could not previously
+  identify. They are **not** part of `personSelectFor(role)`: that module
+  governs `Person` PII, and these live on `User`/`VerificationToken`, which
+  the other three roles never read at all.
 
 - **Necessity:** transfer is necessary for the performance of the tool the
   data subjects' employer operates for its internal asset management
