@@ -97,6 +97,11 @@ export function ConfirmActionDialog(props: ConfirmActionDialogProps) {
       // On the way IN, never on the way out: unmounting on close would cut the
       // close animation and hand Radix a destroyed node to return focus to.
       onOpenChange={(next) => {
+        // Stryker disable next-line ArithmeticOperator: genuinely equivalent. The
+        // key's only job is to DIFFER from the last one, so React remounts; `- 1`
+        // remounts exactly as reliably as `+ 1`. Nothing observable distinguishes
+        // them, so no test can, and guard 5 rightly passes either way. Direction
+        // is chosen for readability alone.
         if (next) setGeneration((current) => current + 1);
         setOpen(next);
       }}

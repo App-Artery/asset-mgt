@@ -99,6 +99,15 @@ const config = {
 
   tempDirName: ".stryker-tmp",
   htmlReporter: { fileName: "reports/mutation/index.html" },
+  // Stryker copies the whole tree into its sandbox, and a local pnpm store
+  // lives INSIDE the repo at `.pnpm-store/` for anyone who has configured one.
+  // It contains unix sockets, which `copyfile` cannot copy — the run dies with
+  // `ENOTSUP: operation not supported on socket` before a single mutant is
+  // tested. Found while merging this PR on a machine that had one; the
+  // original branch did not, which is exactly the kind of works-on-my-machine
+  // difference that makes a tool look broken to the next person.
+  // `.git` is excluded for size, not correctness.
+  ignorePatterns: [".pnpm-store", ".git", ".next", "reports"],
   // Explicit, not defaulted: the sandbox is a full copy of the tree with
   // `// @ts-nocheck` atop every file, and .husky/pre-push runs a full-repo
   // `pnpm lint && pnpm typecheck`. The default (`true`) leaves the sandbox
