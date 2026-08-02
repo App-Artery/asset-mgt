@@ -1,0 +1,94 @@
+# Mutation testing over the guard-bearing modules (issue #12).
+#
+# NOT part of the `ci` required check, and deliberately so. The run takes on the
+# order of tens of minutes because three of the five mutated modules are covered
+# only by real-DB integration tests, so most mutants cost a Postgres round-trip
+# rather than a function call. A required check with that wall time would be
+# paid on every PR — including the large majority that touch none of these
+# files — and a slow required check gets worked around, not waited for.
+#
+# It therefore runs:
+#   - weekly, so the number does not silently rot;
+#   - on pull requests that touch a mutated module, its tests, or this config —
+#     the moment a guard is being written or edited is exactly when the
+#     falsifiability question is live;
+#   - on demand.
+#
+# It CAN fail: `thresholds.break` in stryker.config.mjs is a hard gate, so a PR
+# that adds a guard nothing can falsify goes red here even though `ci` is green.
+# Keep the `paths` list below in sync with `mutate` in stryker.config.mjs.
+name: Mutation testing
+
+on:
+  schedule:
+    # Mondays 02:30 UTC — before the working week, after the nightly backup.
+    - cron: "30 2 * * 1"
+  pull_request:
+    paths:
+      - "src/lib/asset-lifecycle.ts"
+      - "src/lib/person-visibility.ts"
+      - "src/lib/asset-admin.ts"
+      - "src/lib/sign-in-policy.ts"
+      - "src/components/confirm-action-dialog.tsx"
+      - "src/lib/*.test.ts"
+      - "src/lib/*.integration.test.ts"
+      - "src/components/confirm-action-dialog.test.tsx"
+      - "stryker.config.mjs"
+      - ".github/workflows/mutation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mutation:
+    name: mutation
+    runs-on: ubuntu-latest
+    # The run is long by design; the default 360-minute job timeout would let a
+    # hung test runner burn six hours of runner time before anyone noticed.
+    timeout-minutes: 90
+    services:
+      postgres:
+        # Keep this major in sync with ci.yml, docker-compose.yml and Neon.
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: asset_mgt_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # NOT optional. asset-admin.ts, person-visibility.ts and sign-in-policy.ts
+      # are covered only by integration tests gated on
+      # `describe.skipIf(!process.env.TEST_DATABASE_URL)`: without this the
+      # suites skip rather than fail, every mutant in those three modules
+      # survives, and the reported score is measurement error rather than a
+      # low score. stryker.config.mjs throws if this is unset — leave that
+      # guard in place rather than trusting this line to stay here.
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/asset_mgt_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:mutation
+
+      # The HTML report is how a survivor gets triaged: it shows the mutant, the
+      # line, and which tests ran without killing it. Uploaded even on failure —
+      # a failing run is precisely when it is needed.
+      - name: Upload mutation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report-${{ github.run_id }}
+          path: reports/mutation/
+          retention-days: 14
+          if-no-files-found: warn

@@ -49,6 +49,7 @@ and sites afterwards at `/admin/reference` without a deploy.
 | `pnpm dev` / `pnpm build` / `pnpm start`                  | Next.js dev / production build / serve                                                               |
 | `pnpm lint` / `pnpm typecheck`                            | ESLint (flat config) / `tsc --noEmit`                                                                |
 | `pnpm test`                                               | Vitest. Real-DB integration tests run only when `TEST_DATABASE_URL` is set — with it unset they skip |
+| `pnpm test:mutation`                                      | Stryker over the guard-bearing modules. **Requires `TEST_DATABASE_URL`** — refuses to run without it |
 | `pnpm db:migrate` / `pnpm db:deploy` / `pnpm db:generate` | Prisma migrate dev / deploy / generate                                                               |
 | `pnpm db:seed`                                            | Seed staff + first admin (needs `SEED_ADMIN_EMAIL`; optional `STAFF_CSV`)                            |
 | `pnpm db:seed:reference`                                  | Seed asset categories + sites (optional `REFERENCE_CSV`); fails if it would leave zero categories    |
@@ -59,6 +60,26 @@ Husky runs lint-staged on commit and full-repo lint + typecheck on push. CI
 Postgres 17 service container, and an env-free build. `pnpm build` must always
 succeed with no env vars set — required config is read lazily through
 `src/lib/env.ts`.
+
+### Mutation testing
+
+`pnpm test:mutation` runs Stryker over the five modules that encode an
+invariant a test claims to defend — the lifecycle transition map, the person
+-data chokepoint, the assignment/return write path, the sign-in throttle, and
+the confirm dialog. It answers the question this project has got wrong six
+times: _if I delete the production line this test defends, does the test go
+red?_ Configuration, the triage of every surviving mutant, and how the
+breaking threshold was chosen are all in `stryker.config.mjs`.
+
+It is **not** part of the `ci` required check — most mutants cost a Postgres
+round-trip, so a full run is ~17 minutes locally. It runs weekly and on pull
+requests that touch a mutated module or its tests
+(`.github/workflows/mutation.yml`), and it can fail the build.
+
+**It requires `TEST_DATABASE_URL`, and refuses to start without it.** Three of
+the five modules are covered only by real-DB integration tests, which _skip_
+rather than fail when that variable is missing — so a run without it would
+report a score computed from tests that never ran.
 
 ## Provisioning runbook (manual — substitutes for IaC state)
 

@@ -165,6 +165,52 @@ describe.skipIf(!testDatabaseUrl)("asset-admin transactions (real DB)", () => {
     expect(first.id).not.toBe(second.id);
   });
 
+  /**
+   * The "row is not there" branches.
+   *
+   * WHY THIS BLOCK EXISTS: mutation testing (issue #12) found that
+   * `if (!row)`, `if (!current)` and `if (!person)` could each be replaced with
+   * `if (false)` — and their messages emptied — with the suite staying green.
+   * Nothing called any of these with an id that does not exist, so the failure
+   * mode being defended (a caller proceeding against a row it never read, then
+   * failing later with a Prisma error naming a different table) was undefended
+   * by demonstration.
+   */
+  describe("rejects an id that does not resolve", () => {
+    const missingId = () => `missing-${randomUUID()}`;
+
+    it("names the asset when the transition target does not exist", async () => {
+      await expect(
+        transitionAssetStatus(db, {
+          assetId: missingId(),
+          toStatus: AssetStatus.IN_STOCK,
+          tag: uniqueTag(),
+          actorId,
+        }),
+      ).rejects.toThrow(/Asset .* not found/);
+    });
+
+    it("names the asset when the edit target does not exist", async () => {
+      await expect(
+        updateAssetWithEvent(db, {
+          assetId: missingId(),
+          tag: uniqueTag(),
+          categoryId,
+          make: "Dell",
+          model: "Latitude 5450",
+          serial: null,
+          purchasedAt: null,
+          purchasePrice: null,
+          supplier: null,
+          warrantyUntil: null,
+          condition: null,
+          siteId: null,
+          actorId,
+        }),
+      ).rejects.toThrow(/Asset .* not found/);
+    });
+  });
+
   describe("transitionAssetStatus", () => {
     it("rejects ON_ORDER -> ASSIGNED", async () => {
       const asset = await createAssetWithEvent(db, assetInput());
@@ -475,6 +521,112 @@ describe.skipIf(!testDatabaseUrl)("asset-admin transactions (real DB)", () => {
           where: { assetId: asset.id, type: AssetEventType.UPDATED },
         }),
       ).resolves.toBe(0);
+    });
+
+    it("allows an ordinary edit of a tagged asset whose status requires a tag", async () => {
+      // The other half of "refuses to strip the tag" below. Mutation testing
+      // (issue #12) showed the `tag === null` half of that guard could be
+      // replaced with `true` — rejecting EVERY edit of an in-stock asset — and
+      // nothing went red, because no test edited a tag-requiring asset while
+      // supplying its tag. A guard proven only in the direction it rejects is
+      // half a guard.
+      const tag = uniqueTag();
+      const asset = await createAssetWithEvent(
+        db,
+        assetInput({ tag, status: AssetStatus.IN_STOCK }),
+      );
+
+      const updated = await updateAssetWithEvent(db, {
+        ...assetInput({ tag }),
+        assetId: asset.id,
+        model: "ThinkPad X1",
+        actorId,
+      });
+
+      expect(updated.model).toBe("ThinkPad X1");
+      expect(updated.tag).toBe(tag);
+      expect(updated.status).toBe(AssetStatus.IN_STOCK);
+    });
+
+    it("diffs Date, Decimal and null fields by value, not by identity", async () => {
+      // WHY THIS TEST EXISTS: mutation testing (issue #12) found fifteen live
+      // mutants inside the field-diff helper. The existing no-op test leaves
+      // every non-scalar field null, so `null === null` short-circuits on the
+      // first line and the Date and Decimal branches below it were never
+      // reached by anything.
+      //
+      // What is actually at stake is audit integrity in both directions: a
+      // helper that under-reports leaves a real edit with no UPDATED event, and
+      // one that over-reports fills the history with events for edits that
+      // never happened. Prisma hands back a `Date` object and a `Decimal` where
+      // the caller passed a `Date` and a `number`, so identity comparison is
+      // wrong for both.
+      const purchasedAt = new Date("2024-01-15T09:30:00.000Z");
+      const asset = await createAssetWithEvent(
+        db,
+        assetInput({
+          serial: "SN-ORIGINAL",
+          purchasedAt,
+          purchasePrice: 100,
+        }),
+      );
+
+      const unchanged = {
+        ...assetInput({
+          serial: "SN-ORIGINAL",
+          // Fresh instances carrying the same value. `===` is false for both,
+          // so this is the case that reaches the Date and Decimal branches.
+          purchasedAt: new Date("2024-01-15T09:30:00.000Z"),
+          purchasePrice: 100,
+        }),
+        assetId: asset.id,
+        actorId,
+      };
+      await updateAssetWithEvent(db, unchanged);
+      await expect(
+        db.assetEvent.count({
+          where: { assetId: asset.id, type: AssetEventType.UPDATED },
+        }),
+      ).resolves.toBe(0);
+
+      // Half a second later — the same date to the second. `String(Date)` has
+      // no sub-second resolution, so if the Date branch is skipped and the
+      // string fallback answers instead, this edit vanishes from the history.
+      await updateAssetWithEvent(db, {
+        ...unchanged,
+        purchasedAt: new Date("2024-01-15T09:30:00.500Z"),
+      });
+      let events = await eventsFor(asset.id);
+      expect(events.at(-1)?.notes).toBe("Changed: purchasedAt");
+
+      // Decimal vs number: exact through their string forms, not through `===`.
+      await updateAssetWithEvent(db, {
+        ...unchanged,
+        purchasedAt: new Date("2024-01-15T09:30:00.500Z"),
+        purchasePrice: 150,
+      });
+      events = await eventsFor(asset.id);
+      expect(events.at(-1)?.notes).toBe("Changed: purchasePrice");
+
+      // Value -> null and null -> value, the two directions the null guard
+      // exists for.
+      await updateAssetWithEvent(db, {
+        ...unchanged,
+        purchasedAt: new Date("2024-01-15T09:30:00.500Z"),
+        purchasePrice: 150,
+        serial: null,
+      });
+      events = await eventsFor(asset.id);
+      expect(events.at(-1)?.notes).toBe("Changed: serial");
+
+      await updateAssetWithEvent(db, {
+        ...unchanged,
+        purchasedAt: new Date("2024-01-15T09:30:00.500Z"),
+        purchasePrice: 150,
+        serial: "SN-REPLACED",
+      });
+      events = await eventsFor(asset.id);
+      expect(events.at(-1)?.notes).toBe("Changed: serial");
     });
 
     it("refuses to strip the tag off an asset whose status requires one", async () => {

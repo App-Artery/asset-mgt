@@ -27,6 +27,7 @@ import {
 } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  ConditionNotesRequiredError,
   PersonNotAssignableError,
   assignAsset,
   createAssetWithEvent,
@@ -243,6 +244,56 @@ describe.skipIf(!testDatabaseUrl)("assignment and returns (real DB)", () => {
     });
     expect(closed.conditionNotes).toBe("Won't charge");
     expect(events[2]?.assignmentId).toBe(closed.id);
+  });
+
+  it("rejects a repair-bound return whose note is only whitespace", async () => {
+    // WHY THIS TEST EXISTS: mutation testing (issue #12) found that deleting
+    // the `.trim()` from `(input.conditionNotes ?? "").trim() === ""` killed
+    // nothing. The action-layer test that looked like it covered this passes a
+    // whitespace note through `sendToRepair`, whose Zod schema trims it to ""
+    // BEFORE the write layer sees it — so the write layer's own trim was never
+    // the thing under test. This calls the write layer directly, which is the
+    // caller shape the guard's docblock says it exists for.
+    //
+    // This is the AM-02 recurrence exactly: a constraint proven red for NULL
+    // but never for "".
+    const asset = await stockedAsset();
+    const holder = await person("Whitespace Note");
+    await assignAssetToPerson_(asset.id, holder.id);
+
+    await expect(
+      returnAsset(db, {
+        assetId: asset.id,
+        toStatus: AssetStatus.IN_REPAIR,
+        condition: AssetCondition.DEFECTIVE,
+        conditionNotes: "   \t \n ",
+        actorId,
+      }),
+    ).rejects.toBeInstanceOf(ConditionNotesRequiredError);
+
+    // Rejected inside the transaction: still held, still ASSIGNED.
+    await expect(openAssignments(asset.id)).resolves.toHaveLength(1);
+    const after = await db.asset.findUniqueOrThrow({ where: { id: asset.id } });
+    expect(after.status).toBe(AssetStatus.ASSIGNED);
+  });
+
+  it("rejects an assignment to a person id that does not exist", async () => {
+    // The `if (!person)` branch of the leaver guard. Without it the function
+    // would read `undefined?.user` as "assignable" and fail later on the
+    // Assignment foreign key, naming a different table than the real problem.
+    const asset = await stockedAsset();
+
+    await expect(
+      assignAsset(db, {
+        assetId: asset.id,
+        personId: `missing-${randomUUID()}`,
+        actorId,
+      }),
+    ).rejects.toThrow(/Person .* not found/);
+
+    await expect(openAssignments(asset.id)).resolves.toHaveLength(0);
+    const after = await db.asset.findUniqueOrThrow({ where: { id: asset.id } });
+    expect(after.status).toBe(AssetStatus.IN_STOCK);
   });
 
   it("retires an ASSIGNED asset as a single RETURNED event, never two", async () => {

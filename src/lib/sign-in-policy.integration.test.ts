@@ -19,6 +19,51 @@ import {
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 
+/**
+ * The window durations, pinned to wall-clock values. NOT gated on the test
+ * database — these are arithmetic, and gating them would make the numbers stop
+ * being checked exactly when the DB is unavailable.
+ *
+ * WHY THIS BLOCK EXISTS: mutation testing (issue #12) found that
+ * `15 * 60 * 1000` could become `15 / 60 * 1000` — a 15-minute window collapsing
+ * to a quarter of a millisecond, i.e. no throttle at all — and every test below
+ * stayed green. They stayed green because they derive their own fixture
+ * timestamps from these same constants, so shrinking the window shrinks the
+ * test's idea of "stale" in lockstep. That is the project's named failure
+ * pattern verbatim: the guard asserts the thing the author was thinking about
+ * (relative behaviour) rather than the thing that can break (the value).
+ *
+ * The caps themselves are quota arithmetic against the Resend free tier
+ * (100 emails/day): 30/hour sustained is 720/day, which is why the rolling 24h
+ * cap exists at all. A silently-widened window breaks that arithmetic without
+ * breaking any behavioural assertion.
+ */
+describe("sign-in throttle windows and caps", () => {
+  it("counts the per-email window in minutes, not milliseconds", () => {
+    expect(PER_EMAIL_WINDOW_MS).toBe(15 * 60 * 1000);
+    expect(PER_EMAIL_WINDOW_MS).toBe(900_000);
+  });
+
+  it("counts the global hourly window as a real hour", () => {
+    expect(GLOBAL_WINDOW_MS).toBe(60 * 60 * 1000);
+    expect(GLOBAL_WINDOW_MS).toBe(3_600_000);
+  });
+
+  it("counts the global daily window as a rolling 24 hours", () => {
+    expect(GLOBAL_DAILY_WINDOW_MS).toBe(24 * 60 * 60 * 1000);
+    expect(GLOBAL_DAILY_WINDOW_MS).toBe(86_400_000);
+  });
+
+  it("keeps the daily cap under the Resend free-tier quota", () => {
+    // 80 < 100/day. The hourly cap alone does not bound the day (30/h is
+    // 720/day), which is the whole reason the daily window exists.
+    expect(PER_EMAIL_LIMIT).toBe(3);
+    expect(GLOBAL_LIMIT).toBe(30);
+    expect(GLOBAL_DAILY_LIMIT).toBe(80);
+    expect(GLOBAL_DAILY_LIMIT).toBeLessThan(100);
+  });
+});
+
 describe.skipIf(!testDatabaseUrl)("sign-in policy (real DB)", () => {
   let db: PrismaClient;
 

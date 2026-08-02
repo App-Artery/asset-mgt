@@ -20,6 +20,14 @@ import { assertTransition, tagRequiredFor } from "@/lib/asset-lifecycle";
  * 1); deleting an Asset would sever its history.
  */
 
+// Stryker disable StringLiteral: error identity in this module is the CLASS,
+// never the prose. Callers branch with `instanceof` (src/lib/asset-errors.ts
+// maps each class to the operator-facing message), tests assert with
+// `toThrow(TheError)`, and nothing anywhere reads `.name` except one log line
+// in signin/actions.ts that prints it verbatim. Pinning these strings would buy
+// no behaviour and would go red on any wording change. The strings that ARE
+// behaviour — status and condition comparisons — are not in this block and are
+// not ignored.
 /** Rejection of a status change that would leave a tracked asset untagged. */
 export class TagRequiredError extends Error {
   readonly status: AssetStatus;
@@ -30,6 +38,7 @@ export class TagRequiredError extends Error {
     this.status = status;
   }
 }
+// Stryker restore StringLiteral
 
 type Tx = Prisma.TransactionClient;
 
@@ -133,6 +142,7 @@ export async function createAssetWithEvent(
 ): Promise<Asset> {
   if (!INITIAL_ASSET_STATUSES.includes(input.status)) {
     throw new Error(
+      // Stryker disable next-line StringLiteral: the surviving mutant empties the " or " join separator, which changes the message's punctuation and nothing else. The test asserts on /may only be created in/ — the part that identifies the rejection.
       `Assets may only be created in ${INITIAL_ASSET_STATUSES.join(" or ")}, not ${input.status}`,
     );
   }
@@ -261,6 +271,8 @@ export type ReturnStatus = (typeof RETURN_STATUSES)[number];
  * would mean reading the status before the transaction — a TOCTOU read that
  * could disagree with the row the transition then locks.
  */
+// Stryker disable StringLiteral: see the note on TagRequiredError — the class is
+// the contract, the wording is not.
 export class ConditionNotesRequiredError extends Error {
   constructor() {
     super("A repair-bound return must carry a condition note");
@@ -280,6 +292,7 @@ export class PersonNotAssignableError extends Error {
     this.personId = personId;
   }
 }
+// Stryker restore StringLiteral
 
 /**
  * A person may hold assets unless they have a LINKED, DEACTIVATED user account.
@@ -299,6 +312,7 @@ export class PersonNotAssignableError extends Error {
 async function assertPersonAssignable(tx: Tx, personId: string): Promise<void> {
   const person = await tx.person.findUnique({
     where: { id: personId },
+    // Stryker disable next-line BooleanLiteral,ObjectLiteral: narrowing this select changes no behaviour — `id` is read only for the truthiness check below, which an object missing it still satisfies, and `deactivatedAt` is reached through the nested select the mutant leaves alone. The row never leaves this function.
     select: { id: true, user: { select: { deactivatedAt: true } } },
   });
   if (!person) {
@@ -341,6 +355,12 @@ export async function createOpenAssignmentTx(
     data: {
       assetId: input.assetId,
       personId: input.personId,
+      // MUTATION-TESTING NOTE (issue #12): the mutants on this branch are
+      // reported as NO COVERAGE and are deliberately NOT ignored. `checkedOutAt`
+      // has no production caller yet — it exists so AM-04's import can back-date
+      // a legacy assignment — so nothing can kill them until that caller lands.
+      // That is a real gap with a named owner, not an equivalence, and it stays
+      // on the report so AM-04 inherits it rather than discovering it.
       ...(input.checkedOutAt === undefined
         ? {}
         : { checkedOutAt: input.checkedOutAt }),
@@ -393,6 +413,7 @@ async function closeOpenAssignmentTx(
     where: { assetId: input.assetId, returnedAt: null },
     select: { id: true },
   });
+  // Stryker disable next-line ConditionalExpression,BlockStatement: reaching this branch means writing an Asset row that says ASSIGNED while no open Assignment exists — the cross-table inconsistency the DB cannot express. Manufacturing it would leave a permanently broken row in a test database that is never truncated, which LEARNINGS §Testing records as the reason invariant assertions there go fragile. The README reconciliation query is the detection mechanism for the real thing.
   if (!open) {
     return null;
   }
@@ -433,6 +454,7 @@ function eventTypeFor(
   openedAssignmentId: string | null,
   closedAssignmentId: string | null,
 ): AssetEventType {
+  // Stryker disable ConditionalExpression,BlockStatement,StringLiteral: unreachable by construction today — assertTransition rejects ASSIGNED -> ASSIGNED, so no single transition can both open and close an assignment. The throw exists to fail loudly if that transition is ever added (see the comment below); until it is, no test can reach it.
   if (openedAssignmentId !== null && closedAssignmentId !== null) {
     // Unreachable today ONLY because assertTransition rejects
     // ASSIGNED -> ASSIGNED — a guarantee that lives in asset-lifecycle.ts, with
@@ -449,6 +471,7 @@ function eventTypeFor(
       "A single transition both opened and closed an assignment; one AssetEvent cannot represent both custody changes without losing one",
     );
   }
+  // Stryker restore ConditionalExpression,BlockStatement,StringLiteral
   if (openedAssignmentId !== null) return AssetEventType.ASSIGNED;
   if (closedAssignmentId !== null) return AssetEventType.RETURNED;
   return AssetEventType.STATUS_CHANGED;
@@ -553,7 +576,9 @@ async function transitionAssetStatusTx(
     where: { id: input.assetId },
     data: {
       status: input.toStatus,
+      // Stryker disable next-line ConditionalExpression: equivalent mutant. Collapsing this spread to its other branch yields `{ tag: undefined }`, and Prisma treats an undefined field as "leave it alone" — byte-for-byte the same write. The spread is for readers, not for Prisma.
       ...(suppliedTag === undefined ? {} : { tag: suppliedTag }),
+      // Stryker disable next-line ConditionalExpression: equivalent mutant, same reason as the tag spread above. No production caller passes `condition: null` explicitly — it is either a real condition or absent — so the collapsed branch also resolves to undefined.
       ...(input.condition == null ? {} : { condition: input.condition }),
     },
   });
@@ -667,7 +692,9 @@ export async function returnAsset(
 /** Field-level equality across the shapes Prisma returns: Date, Decimal, scalars. */
 function hasChanged(before: unknown, after: unknown): boolean {
   if (before === after) return false;
+  // Stryker disable next-line ConditionalExpression,LogicalOperator: the SKIP direction of this line is an equivalent mutant — with the early return removed, a null-vs-value pair falls through to the `String(before) !== String(after)` fallback, which answers "changed" for the same inputs ("null" never equals a real value). The line is a shortcut, not a decision. Its inversions (`!=` for `==`) are NOT ignored and are killed by "diffs Date, Decimal and null fields by value".
   if (before == null || after == null) return true;
+  // Stryker disable next-line LogicalOperator: equivalent mutant. `&&` -> `||` can only differ when exactly one side is a Date, and the line above has already returned for every null pair — so for these typed columns both sides are Dates or neither is.
   if (before instanceof Date && after instanceof Date) {
     return before.getTime() !== after.getTime();
   }
