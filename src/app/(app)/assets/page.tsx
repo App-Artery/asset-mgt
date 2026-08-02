@@ -159,9 +159,23 @@ const filterSchema = z.object({
   // Coerced, because a query string only ever carries text. `.int().min(1)`
   // is the floor: "0", "-3", "2.7", "abc", a repeated param arriving as an
   // array, and Infinity all fall through to undefined and therefore to page 1
-  // — none of them reaches `skip`. `.int()` also rejects anything outside the
-  // safe-integer range, so a hand-edited `?page=99999999999999999999` cannot
-  // hand Postgres a nonsense OFFSET.
+  // — none of them reaches `skip`.
+  //
+  // `.int()` also rejects anything outside the safe-integer range, so a
+  // hand-edited `?page=99999999999999999999` cannot hand Postgres a nonsense
+  // OFFSET. That is ZOD 4 behaviour specifically and worth naming, because
+  // zod 3's `.int()` was a bare Number.isInteger check that let unsafe
+  // integers through — a review read this comment against the zod 3 rule and
+  // called it wrong (PR #17). Verified against zod 4.4.3: the oversized string
+  // above fails with `{ code: "too_big", origin: "int", maximum:
+  // 9007199254740991 }`, and "1e400" fails as invalid_type once it coerces to
+  // Infinity. A zod major bump is the thing that would quietly falsify this;
+  // page.integration.test.tsx §"malformed page" is the guard that would notice.
+  //
+  // Load-bearing, not belt-and-braces: `skip` is computed from the REQUESTED
+  // page, and that query is dispatched before `pageCount` is known, so the
+  // out-of-range clamp below does NOT protect it. This schema is the only
+  // guard `skip` has.
   //
   // This only floors the page. It cannot CEIL it, because the last page is not
   // known until the count comes back — `?page=999` is parsed as 999 here and

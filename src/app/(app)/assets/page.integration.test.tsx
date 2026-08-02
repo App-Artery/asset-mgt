@@ -609,6 +609,15 @@ describe.skipIf(!testDatabaseUrl)("asset register page (real DB)", () => {
       // non-integer; an array is what a repeated param arrives as. Each falls
       // back on its own, and the category beside it survives — the per-field
       // `.catch`, not one all-or-nothing safeParse over the object.
+      //
+      // The last two are the ones with teeth, and they are here because a
+      // review doubted them (PR #17). `skip` is computed from the REQUESTED
+      // page, and `pageOfAssets(requestedPage)` runs inside the Promise.all
+      // BEFORE `pageCount` exists — so the out-of-range clamp cannot save this
+      // one. The schema is the only thing standing between a hand-edited
+      // `?page=` and an OFFSET Postgres cannot represent. Zod 4's `.int()`
+      // caps at Number.MAX_SAFE_INTEGER and `z.number()` rejects Infinity;
+      // relax either and these two turn red while the six above stay green.
       const malformed: (string | string[])[] = [
         "0",
         "-3",
@@ -616,6 +625,8 @@ describe.skipIf(!testDatabaseUrl)("asset register page (real DB)", () => {
         "abc",
         "",
         ["1", "2"],
+        "99999999999999999999", // > Number.MAX_SAFE_INTEGER
+        "1e400", // coerces to Infinity
       ];
       for (const page of malformed) {
         const html = await renderRegister({
