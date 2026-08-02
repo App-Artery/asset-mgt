@@ -1,15 +1,18 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { AssetStatus, type Prisma } from "@prisma/client";
 import { Plus } from "lucide-react";
 import { z } from "zod";
 import { CONDITION_LABELS } from "@/lib/labels";
 import { requireRole } from "@/lib/authz";
 import { getDb } from "@/lib/db";
+import { assetSearchWhere, normaliseSearchTerm } from "@/lib/asset-search";
 import {
   PERSON_NAME_SELECT,
   canViewAssignments,
 } from "@/lib/person-visibility";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { StatusChip } from "@/components/ui/status-chip";
@@ -39,6 +42,22 @@ const STICKY_HEAD =
 /** Empty selects submit ""; normalise before validation, not after. */
 const blankToUndefined = (value: unknown) =>
   typeof value === "string" && value.trim() === "" ? undefined : value;
+
+/**
+ * Whitespace-collapse the search term at the PARSE boundary, so exactly one
+ * normalised string reaches the predicate, the exact-tag lookup, every link on
+ * this page and the input's own value.
+ *
+ * Before validation rather than after (LEARNINGS §Zod): `.transform()` runs
+ * after the validators, so a term of three spaces would satisfy `.min(1)` and
+ * only then collapse to "" — a search for nothing that reads as a search for
+ * something. Normalising first makes an all-whitespace box the same thing as an
+ * empty one, which is what a reader who hit Enter on it meant.
+ */
+const normaliseTerm = (value: unknown) =>
+  typeof value === "string"
+    ? blankToUndefined(normaliseSearchTerm(value))
+    : value;
 
 /**
  * A column header that is also its own sort control.
@@ -136,6 +155,12 @@ function orderByFor(
 // a typo in `dir` would silently throw away the status and category someone
 // had actually chosen. Each field now falls back on its own.
 const filterSchema = z.object({
+  // The lookup term (AM-07). It is HERE and not only in the where-builder and
+  // the form because `.object()` strips unknown keys silently: a `q` wired into
+  // both of those but missing from this schema is dropped with no error
+  // anywhere, and the search box then does nothing at all for reasons no stack
+  // trace explains.
+  q: z.preprocess(normaliseTerm, z.string().min(1).optional().catch(undefined)),
   status: z.preprocess(
     blankToUndefined,
     z.enum(AssetStatus).optional().catch(undefined),
@@ -231,6 +256,25 @@ export default async function AssetsPage({
   const scopeFilters: Prisma.AssetWhereInput = {};
   if (filters.categoryId) scopeFilters.categoryId = filters.categoryId;
   if (filters.siteId) scopeFilters.siteId = filters.siteId;
+  // `q` goes in `scopeFilters`, WITH category and site — not in `where` alone.
+  //
+  // The design question is what the estate bar should count while a search is
+  // running: the whole estate, or the search results? Counting the whole estate
+  // would leave the bar reading "In stock 3,904" above a table of four matching
+  // rows, and clicking that chip then lands you on a count that was never true
+  // of anything you could see. The bar's job is to break down the set you are
+  // looking at, along the one axis it owns.
+  //
+  // A search is the same KIND of narrowing as a category or a site: it chooses
+  // which assets are in play. Status is the one dimension the bar itself
+  // controls, which is why it and only it is excluded. `q` therefore sits on
+  // the scope side of that line, and "of N" in the header counts search hits.
+  //
+  // Composed under `AND` rather than spread. `assetSearchWhere` returns an `OR`
+  // today; spreading it would silently clobber a sibling `OR` if this clause
+  // ever grows one, and the failure would be a wrong result set rather than a
+  // type error.
+  if (filters.q) scopeFilters.AND = assetSearchWhere(filters.q);
 
   const where: Prisma.AssetWhereInput = { ...scopeFilters };
   if (filters.status) where.status = filters.status;
@@ -239,6 +283,29 @@ export default async function AssetsPage({
   const sortDirection = filters.dir ?? "asc";
 
   const db = getDb();
+
+  // A scanned barcode should open the asset, not a one-row register.
+  //
+  // EQUALITY, never `contains`. A partial match that redirected would drop a
+  // reader typing "REG-1" into whichever asset happened to sort first — an
+  // arbitrary asset, silently, with no way to tell it was not the one they
+  // meant. `tag` is unique, so exact match means exactly one asset or none.
+  //
+  // Runs AFTER `requireRole` above, which is the first statement of this
+  // component: a reader who may not see the register must not be able to probe
+  // for tag existence through the redirect either.
+  //
+  // Case-sensitive, and that degrades correctly rather than failing: a
+  // mistyped case falls through to the search below, where `mode: "insensitive"`
+  // finds the same asset and renders a one-row register with a link to it.
+  if (filters.q) {
+    const exactTagMatch = await db.asset.findUnique({
+      where: { tag: filters.q },
+      select: { id: true },
+    });
+    if (exactTagMatch) redirect(`/assets/${exactTagMatch.id}`);
+  }
+
   const requestedPage = filters.page ?? 1;
 
   // One definition of a page of rows, so the out-of-range retry below cannot
@@ -404,6 +471,12 @@ export default async function AssetsPage({
   const hrefWith = (overrides: Record<string, string | null>) => {
     const params = new URLSearchParams();
     const merged: Record<string, string | null | undefined> = {
+      // Without this line every sort header and every estate chip silently
+      // drops the search: you sort a set of four results and get the whole
+      // register back, sorted. It is the same class of bug as a pager that
+      // rebuilds the query string from scratch, and it is invisible until
+      // somebody clicks a header while searching.
+      q: filters.q ?? null,
       status: filters.status ?? null,
       categoryId: filters.categoryId ?? null,
       siteId: filters.siteId ?? null,
@@ -498,7 +571,9 @@ export default async function AssetsPage({
           a bug. A GET form submits its fields and nothing else, so the absence
           of the input IS the reset: choosing a different category drops you
           back to page 1 of the new set, which is the only page guaranteed to
-          exist in it. */}
+          exist in it. That absence is also what resets the page on a new
+          search — landing a fresh search on page 7 of the set it replaced is
+          the bug this prevents. */}
       <form method="get" className="flex flex-wrap items-end gap-3">
         {filters.status ? (
           <input type="hidden" name="status" value={filters.status} />
@@ -509,6 +584,27 @@ export default async function AssetsPage({
         {filters.dir ? (
           <input type="hidden" name="dir" value={filters.dir} />
         ) : null}
+        {/* First control in the row: the lookup is what an operator holding a
+            device in one hand came here to do, and the two selects are the
+            slower path. `type="search"` for the browser's own clear
+            affordance — the "Clear" link beside the button resets everything,
+            which is a different intention.
+
+            The placeholder names the fields it matches, because a search box
+            that quietly declines to match the thing you typed is worse than one
+            that says what it covers. It does NOT match holder names, by the
+            AM-07 ruling — see src/lib/asset-search.ts. */}
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="filter-q">Search</Label>
+          <Input
+            id="filter-q"
+            type="search"
+            name="q"
+            defaultValue={filters.q ?? ""}
+            placeholder="Tag, serial, make, model, category"
+            className="w-full sm:w-72"
+          />
+        </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="filter-category">Category</Label>
           <Select
