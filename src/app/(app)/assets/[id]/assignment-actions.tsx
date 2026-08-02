@@ -1,14 +1,14 @@
 "use client";
 
-import { useActionState, useState } from "react";
-import { Button } from "@/components/ui/button";
+import { useState, type ReactNode } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
+import { FormDialog } from "@/components/form-dialog";
 import { conditionNotesRequiredFor } from "@/lib/asset-lifecycle";
 import { assignAssetToPerson, returnAssetFromPerson } from "../actions";
 import { CONDITION_LABELS, CONDITION_ORDER } from "@/lib/labels";
-import { ActionMessage } from "./action-message";
+import { EventNoteHint } from "./event-note-hint";
 
 /**
  * The person picker's row shape. Deliberately NOT the shape personSelectFor
@@ -37,66 +37,59 @@ const DESTINATION_LABELS: Record<ReturnDestination, string> = {
 type ConditionOption = (typeof CONDITION_ORDER)[number];
 
 /** IN_STOCK -> ASSIGNED. Opens the assignment; the picker is over existing Person rows. */
-export function AssignForm({
+export function AssignDialog({
   assetId,
   people,
+  trigger,
 }: {
   assetId: string;
   people: readonly PickerPerson[];
+  trigger: ReactNode;
 }) {
-  const [state, formAction, pending] = useActionState(
-    assignAssetToPerson,
-    null,
-  );
-
-  if (people.length === 0) {
-    return (
-      <div className="flex max-w-md flex-col gap-2">
-        <h3 className="font-medium">Assign</h3>
+  return (
+    <FormDialog
+      action={assignAssetToPerson}
+      hiddenFields={{ assetId }}
+      trigger={trigger}
+      title="Assign this asset"
+      description="Who is taking it. The assignment records the holder — the register answers that question from here, not from a note."
+      submitLabel="Assign"
+      pendingLabel="Assigning…"
+    >
+      {people.length === 0 ? (
         <p className="text-muted-foreground text-sm">
           There are no staff records to assign to. Staff are loaded by the seed
           script — this release has no screen for creating them (AM-03-CF-1).
         </p>
-      </div>
-    );
-  }
-
-  return (
-    <form action={formAction} className="flex max-w-md flex-col gap-3">
-      <h3 className="font-medium">Assign</h3>
-      <input type="hidden" name="assetId" value={assetId} />
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="assign-person">Assign to</Label>
-        <Select
-          id="assign-person"
-          name="personId"
-          defaultValue=""
-          required
-          disabled={pending}
-        >
-          <option value="" disabled>
-            Choose a person
-          </option>
-          {people.map((person) => (
-            <option key={person.id} value={person.id}>
-              {person.name} — {person.employeeRef ?? "no employee ref"}
-            </option>
-          ))}
-        </Select>
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="assign-notes">Notes</Label>
-        <Input id="assign-notes" name="notes" disabled={pending} />
-        <p className="text-muted-foreground text-xs">
-          Optional, and never personal data: this lands in the append-only event
-          log. Who holds the asset is already recorded by the assignment itself.
-        </p>
-      </div>
-      <Button type="submit" disabled={pending} className="w-fit">
-        {pending ? "Assigning…" : "Assign"}
-      </Button>
-      <ActionMessage state={state} />
-    </form>
+      ) : (
+        <>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="assign-person">Assign to</Label>
+            <Select id="assign-person" name="personId" defaultValue="" required>
+              <option value="" disabled>
+                Choose a person
+              </option>
+              {people.map((person) => (
+                <option key={person.id} value={person.id}>
+                  {person.name} — {person.employeeRef ?? "no employee ref"}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="assign-notes">Notes</Label>
+            <Input id="assign-notes" name="notes" />
+            {/* The form where a name is likeliest to be typed — one is being
+                chosen in the field above — so it carries the same standing
+                warning as every other field that writes AssetEvent.notes,
+                plus the reason it is redundant here. */}
+            <EventNoteHint>
+              Who holds the asset is already recorded by the assignment itself.
+            </EventNoteHint>
+          </div>
+        </>
+      )}
+    </FormDialog>
   );
 }
 
@@ -113,18 +106,20 @@ export function AssignForm({
  * is required depends on the SELECTED destination and condition, so it is
  * client state; conditionNotesRequiredFor is the same function the server action
  * validates with, so the marker and the guard cannot drift apart.
+ *
+ * `conditionNotes` is the one free-text field in this directory that does NOT
+ * carry `EventNoteHint`: it is written to `Assignment.conditionNotes`, a row
+ * that already names the holder, and never to `AssetEvent.notes`.
  */
-export function ReturnFromPersonForm({
+export function ReturnFromPersonDialog({
   assetId,
   destinations,
+  trigger,
 }: {
   assetId: string;
   destinations: readonly ReturnDestination[];
+  trigger: ReactNode;
 }) {
-  const [state, formAction, pending] = useActionState(
-    returnAssetFromPerson,
-    null,
-  );
   // `?? "IN_STOCK"` rather than trusting destinations[0]: an empty array is
   // unreachable today (this form only renders from ASSIGNED, which permits
   // both) but indexing it is undefined at runtime and a type error the moment
@@ -136,9 +131,17 @@ export function ReturnFromPersonForm({
   const notesRequired = conditionNotesRequiredFor(toStatus, condition);
 
   return (
-    <form action={formAction} className="flex max-w-md flex-col gap-3">
-      <h3 className="font-medium">Take it back</h3>
-      <input type="hidden" name="assetId" value={assetId} />
+    <FormDialog
+      action={returnAssetFromPerson}
+      hiddenFields={{ assetId }}
+      trigger={trigger}
+      title="Take it back"
+      description="Closes the assignment. Back to stock or straight to repair — one action either way, so the register is never briefly wrong about who holds it."
+      submitLabel={
+        toStatus === "IN_REPAIR" ? "Take back and send to repair" : "Take back"
+      }
+      pendingLabel="Saving…"
+    >
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="return-destination">Where it goes</Label>
         <Select
@@ -148,7 +151,6 @@ export function ReturnFromPersonForm({
           onChange={(event) =>
             setToStatus(event.target.value as ReturnDestination)
           }
-          disabled={pending}
         >
           {destinations.map((destination) => (
             <option key={destination} value={destination}>
@@ -167,7 +169,6 @@ export function ReturnFromPersonForm({
             setCondition(event.target.value as ConditionOption)
           }
           required
-          disabled={pending}
         >
           {CONDITION_ORDER.map((option) => (
             <option key={option} value={option}>
@@ -184,7 +185,6 @@ export function ReturnFromPersonForm({
           id="return-condition-notes"
           name="conditionNotes"
           required={notesRequired}
-          disabled={pending}
         />
         <p className="text-muted-foreground text-xs">
           {notesRequired
@@ -192,14 +192,6 @@ export function ReturnFromPersonForm({
             : "Optional for a routine return."}
         </p>
       </div>
-      <Button type="submit" disabled={pending} className="w-fit">
-        {pending
-          ? "Saving…"
-          : toStatus === "IN_REPAIR"
-            ? "Take back and send to repair"
-            : "Take back"}
-      </Button>
-      <ActionMessage state={state} />
-    </form>
+    </FormDialog>
   );
 }

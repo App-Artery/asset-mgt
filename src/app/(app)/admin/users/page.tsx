@@ -28,9 +28,14 @@ export default async function AdminUsersPage() {
 
   return (
     <>
-      <h1 className="text-2xl font-semibold tracking-tight">Users</h1>
+      {/* Data first, the control one step away (AM-09 DESIGN §3 rule 1): the
+          roster is what this page is for, and provisioning is what you came to
+          do about twice a month. */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold tracking-tight">Users</h1>
+        <AddUserForm />
+      </div>
       <UsersTable users={rows} currentAdminId={userId} />
-      <AddUserForm />
     </>
   );
 }

@@ -169,7 +169,15 @@ describe.skipIf(!testDatabaseUrl)("asset assignment UI (real DB)", () => {
         })),
       ),
       // Args and rows together: proves no person data came BACK either.
-      payload: JSON.stringify(recorded),
+      //
+      // NOT named `payload`, which it was until #19 review: every reader took
+      // that for the RSC payload — the thing serialised to the BROWSER — and
+      // read assertions on it as claims about what crosses the network. It is
+      // the opposite end of the request. Nothing in this file observes the RSC
+      // payload at all: `renderToStaticMarkup` produces HTML and no flight
+      // data, so "this value never reaches the client" is not a claim any test
+      // here can make.
+      dbTraffic: JSON.stringify(recorded),
     };
   }
 
@@ -188,7 +196,7 @@ describe.skipIf(!testDatabaseUrl)("asset assignment UI (real DB)", () => {
     it("fetches no assignment and no person data on the asset detail page", async () => {
       await signInAs(Role.STAFF_RO);
 
-      const { html, models, requested, payload } =
+      const { html, models, requested, dbTraffic } =
         await renderDetail(assignedAssetId);
 
       // The tables are never touched…
@@ -197,10 +205,10 @@ describe.skipIf(!testDatabaseUrl)("asset assignment UI (real DB)", () => {
       // …nor reached by a nested include, on any query the page made.
       expect(requested).not.toMatch(/assignment|person|actor/i);
       // …and nothing person-shaped came back.
-      expect(payload).not.toContain(personName);
-      expect(payload).not.toContain(personRef);
-      expect(payload).not.toContain(personEmail);
-      expect(payload).not.toContain(actorEmail);
+      expect(dbTraffic).not.toContain(personName);
+      expect(dbTraffic).not.toContain(personRef);
+      expect(dbTraffic).not.toContain(personEmail);
+      expect(dbTraffic).not.toContain(actorEmail);
 
       // The page still works: the asset and its status history render, with a
       // neutral label where a person would otherwise appear.
@@ -218,12 +226,12 @@ describe.skipIf(!testDatabaseUrl)("asset assignment UI (real DB)", () => {
     it("fetches no assignment and no person data on the register", async () => {
       await signInAs(Role.STAFF_RO);
 
-      const { html, models, requested, payload } = await renderRegister();
+      const { html, models, requested, dbTraffic } = await renderRegister();
 
       expect(models).not.toContain("Assignment");
       expect(models).not.toContain("Person");
       expect(requested).not.toMatch(/assignment|person/i);
-      expect(payload).not.toContain(personName);
+      expect(dbTraffic).not.toContain(personName);
       expect(html).not.toContain("Held by");
       expect(html).not.toContain(personName);
     });
@@ -236,11 +244,11 @@ describe.skipIf(!testDatabaseUrl)("asset assignment UI (real DB)", () => {
     it("does fetch the holder and the holder history on the detail page", async () => {
       await signInAs(Role.ADMIN_IT);
 
-      const { html, models, payload } = await renderDetail(assignedAssetId);
+      const { html, models, dbTraffic } = await renderDetail(assignedAssetId);
 
       expect(models).toContain("Assignment");
-      expect(payload).toContain(personName);
-      expect(payload).toContain(personRef);
+      expect(dbTraffic).toContain(personName);
+      expect(dbTraffic).toContain(personRef);
       expect(html).toContain(personName);
       expect(html).toContain(personRef);
     });
@@ -248,10 +256,10 @@ describe.skipIf(!testDatabaseUrl)("asset assignment UI (real DB)", () => {
     it("does fetch the holder on the register", async () => {
       await signInAs(Role.ADMIN_IT);
 
-      const { html, models, payload } = await renderRegister();
+      const { html, models, dbTraffic } = await renderRegister();
 
       expect(models).toContain("Assignment");
-      expect(payload).toContain(personName);
+      expect(dbTraffic).toContain(personName);
       expect(html).toContain("Held by");
       expect(html).toContain(personName);
     });
@@ -262,7 +270,7 @@ describe.skipIf(!testDatabaseUrl)("asset assignment UI (real DB)", () => {
     it("selects the actor's email for ADMIN_IT only", async () => {
       await signInAs(Role.ADMIN_IT);
       const admin = await renderDetail(assignedAssetId);
-      expect(admin.payload).toContain(actorEmail);
+      expect(admin.dbTraffic).toContain(actorEmail);
 
       for (const role of [Role.PROCUREMENT, Role.FINANCE]) {
         await signInAs(role);
@@ -271,7 +279,7 @@ describe.skipIf(!testDatabaseUrl)("asset assignment UI (real DB)", () => {
         // Change cell for the same reason as the STAFF_RO case above: the bare
         // label is not unique to the history table.
         expect(view.html).toContain("In stock → Assigned");
-        expect(view.payload).not.toContain(actorEmail);
+        expect(view.dbTraffic).not.toContain(actorEmail);
         expect(view.html).not.toContain(actorEmail);
       }
     });
@@ -288,21 +296,46 @@ describe.skipIf(!testDatabaseUrl)("asset assignment UI (real DB)", () => {
 
   // AC 1: an ASSIGNED asset offers return (to stock OR to repair) and retire,
   // and NO separate "send to repair" — that move is the repair-bound return.
+  //
+  // #10 moved every lifecycle form into a dialog, so an offered move is now a
+  // TRIGGER rather than an inline form heading, and the trailing ellipsis is
+  // part of the affordance. Same claim, different selector — with one half of it
+  // relocated: Radix mounts dialog content only once open and portals it, so
+  // nothing inside a dialog reaches server-rendered markup. What the return form
+  // asks for once opened (both destinations, one action) and what the picker
+  // shows (employeeRef, never an email) are asserted in
+  // `[id]/lifecycle-actions.test.tsx`, which can open them.
   describe("lifecycle moves offered", () => {
     it("offers assign, send to repair and retire on an IN_STOCK asset", async () => {
       await signInAs(Role.ADMIN_IT);
 
-      const { html } = await renderDetail(stockAssetId);
+      const { html, models, dbTraffic } = await renderDetail(stockAssetId);
 
-      expect(html).toContain(">Assign<");
-      expect(html).toContain(">Send to repair<");
-      // AM-09: retire moved behind a confirm dialog, so the affordance is
-      // its trigger rather than an inline form heading. The assertion still
-      // says the same thing — this status offers retirement.
+      expect(html).toContain(">Assign…<");
+      expect(html).toContain(">Send to repair…<");
       expect(html).toContain(">Retire asset…<");
-      expect(html).not.toContain(">Take it back<");
-      // The picker disambiguates by employeeRef, and carries no email.
-      expect(html).toContain(personRef);
+      expect(html).not.toContain(">Take it back…<");
+      // The picker's people are fetched for this status — the query is only
+      // made when the ASSIGN move is offered — and for ADMIN_IT the rows come
+      // back carrying an email, because `personSelectFor(ADMIN_IT)` selects
+      // one. Two facts about the SERVER, and that is the whole of it:
+      //
+      //   1. the DB is asked for people here, and answers with an address;
+      //   2. the server-rendered markup prints no address.
+      //
+      // What this does NOT show is that the address stops at the server. That
+      // would be a claim about the RSC payload, and nothing in this file
+      // observes one (see `record`). It is also not what makes the second
+      // assertion pass: the picker lives inside a Radix dialog, which mounts
+      // nothing until it is opened, so its contents are absent from static
+      // markup no matter what the props hold.
+      //
+      // The address is in fact dropped — page.tsx maps the rows to
+      // `PickerPerson`, which has no email field — but the guard on that is
+      // the type, checked by tsc, NOT this test. Do not read these three
+      // lines as a client-boundary assertion; they are a server-side one.
+      expect(models).toContain("Person");
+      expect(dbTraffic).toContain(personEmail);
       expect(html).not.toContain(personEmail);
     });
 
@@ -311,16 +344,12 @@ describe.skipIf(!testDatabaseUrl)("asset assignment UI (real DB)", () => {
 
       const { html } = await renderDetail(assignedAssetId);
 
-      expect(html).toContain(">Take it back<");
-      expect(html).toContain(">Back to stock<");
-      expect(html).toContain(">Straight to repair<");
-      // AM-09: retire moved behind a confirm dialog, so the affordance is
-      // its trigger rather than an inline form heading. The assertion still
-      // says the same thing — this status offers retirement.
+      // One move covering both ways out of ASSIGNED that are not retirement.
+      expect(html).toContain(">Take it back…<");
       expect(html).toContain(">Retire asset…<");
       // Not a second, parallel path out of ASSIGNED.
-      expect(html).not.toContain(">Send to repair<");
-      expect(html).not.toContain(">Assign<");
+      expect(html).not.toContain(">Send to repair…<");
+      expect(html).not.toContain(">Assign…<");
     });
   });
 });
