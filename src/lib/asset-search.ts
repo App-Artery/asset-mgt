@@ -86,6 +86,27 @@ export function normaliseSearchTerm(raw: string): string {
 export function assetSearchWhere(q: string): Prisma.AssetWhereInput {
   const contains = normaliseSearchTerm(q);
 
+  // An empty normalised term is NO PREDICATE, not a predicate that matches
+  // everything. `/assets` never reaches this today — its parse boundary turns a
+  // whitespace-only `q` into `undefined` — but this is an exported helper, so
+  // its contract has to hold for callers that have not done that.
+  //
+  // What `contains: ""` compiles to is `ILIKE '%%'`, and per-column that is not
+  // the harmless no-op it looks like: `NULL ILIKE '%%'` is NULL, not TRUE, so
+  // the branch drops the row. Measured against real Postgres, a lone
+  // `{ tag: { contains: "" } }` does exclude an untagged asset.
+  //
+  // The OR above happens to mask that: `make` and `model` are non-nullable, so
+  // their branches match every row and untagged assets survive anyway. That is
+  // a coincidence of the current column list, not a property of the design —
+  // narrow the OR to the two nullable columns and an empty search would start
+  // silently hiding exactly the assets nobody has tagged yet. Returning `{}`
+  // does not depend on which columns are listed.
+  //
+  // It is also five ILIKEs and a LEFT JOIN onto Category to express "no
+  // filter", which the planner cannot simplify away.
+  if (contains === "") return {};
+
   // `mode: "insensitive"` on every branch. Postgres LIKE is case-sensitive, so
   // without it a search for `thinkpad` misses every `ThinkPad` the importer
   // wrote, and the feature only works for readers who type the way the CSV did.
