@@ -75,9 +75,21 @@ import { authConfig } from "@/auth.config";
  * treating every request as anonymous, and bouncing every authenticated user
  * to /signin, which is indistinguishable from broken sign-in and cost a full
  * debugging session once already (Hobby-plan runtime logs retain one hour, so
- * it has to be caught live or not at all). /signin is excluded by the
- * middleware matcher, so it still renders and the uniform sign-in message is
- * untouched — this adds no user-visible error surface.
+ * it has to be caught live or not at all).
+ *
+ * Be clear about what the throw costs. next-auth awaits this factory once per
+ * request and does not catch it (`next-auth/lib/index.js`, the `await
+ * config(req)` in `initAuth`), so with AUTH_SECRET absent the middleware
+ * rejects and EVERY GATED ROUTE RETURNS 500 until the variable is restored.
+ * That is the intended trade: a loud, obviously-broken deployment beats a
+ * quietly anonymous one. What stays server-side is the MESSAGE — the string
+ * below goes to the runtime log; the response carries Next's generic 500, not
+ * the name of the missing variable.
+ *
+ * /signin is excluded by the middleware matcher, so it is not among the routes
+ * that 500: it still renders, and its one uniform message for every sign-in
+ * outcome (CLAUDE.md §sign-in throttle) is untouched. The failure surfaces on
+ * the gated app, never as a new distinguishable state in the sign-in flow.
  *
  * The throw can only live in a factory: evaluated eagerly it would fire at
  * module evaluation, which is exactly when a zero-env build touches this
