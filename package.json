@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:mutation": "stryker run",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "db:generate": "prisma generate",
@@ -62,6 +63,8 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
+    "@stryker-mutator/core": "9.6.1",
+    "@stryker-mutator/vitest-runner": "9.6.1",
     "@tailwindcss/postcss": "^4",
     "@testing-library/jest-dom": "^6.6.0",
     "@testing-library/react": "^16.3.2",

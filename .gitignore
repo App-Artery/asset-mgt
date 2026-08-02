@@ -13,6 +13,14 @@
 # testing
 /coverage
 
+# mutation testing — Stryker's sandbox holds full copies of the source tree with
+# `// @ts-nocheck` injected at the top of every file. Untracked AND unlinted:
+# see the ignores in eslint.config.mjs and the exclude in tsconfig.json, because
+# .husky/pre-push runs a full-repo `pnpm lint && pnpm typecheck` that would
+# otherwise fail for everyone who has ever run the mutation suite.
+/.stryker-tmp/
+/reports/
+
 # next.js
 /.next/
 /out/

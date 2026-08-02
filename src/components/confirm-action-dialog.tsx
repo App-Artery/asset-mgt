@@ -97,6 +97,11 @@ export function ConfirmActionDialog(props: ConfirmActionDialogProps) {
       // On the way IN, never on the way out: unmounting on close would cut the
       // close animation and hand Radix a destroyed node to return focus to.
       onOpenChange={(next) => {
+        // Stryker disable next-line ArithmeticOperator: genuinely equivalent. The
+        // key's only job is to DIFFER from the last one, so React remounts; `- 1`
+        // remounts exactly as reliably as `+ 1`. Nothing observable distinguishes
+        // them, so no test can, and guard 5 rightly passes either way. Direction
+        // is chosen for readability alone.
         if (next) setGeneration((current) => current + 1);
         setOpen(next);
       }}
@@ -111,6 +116,7 @@ function ConfirmActionDialogRun({
   description,
   confirmLabel,
   pendingLabel,
+  // Stryker disable next-line BooleanLiteral: the default is dead — all three call sites pass `destructive` explicitly — and it selects a button colour variant, nothing else. A test pinning it would assert a design-token name.
   destructive = false,
   action,
   hiddenFields,
@@ -130,6 +136,30 @@ function ConfirmActionDialogRun({
   const succeeded = state?.ok === true;
 
   return (
+    /*
+     * MUTATION-TESTING NOTE (issue #12). Guard 3 — "an in-flight action cannot
+     * be dismissed" — is implemented FOUR times over: once in `onOpenChange`,
+     * and once in each of the three Radix escape hatches below.
+     *
+     * For ESCAPE that is a genuine redundancy: `onEscapeKeyDown` and
+     * `onOpenChange` each stop it on their own, so a mutant removing either one
+     * survives no matter how good the test is. Those two are ignored below, and
+     * the behaviour itself IS proven — see "refuses Escape and keeps the dialog
+     * open while pending".
+     *
+     * For the OVERLAY it is not redundancy, it is an untested route:
+     * `onPointerDownOutside` and `onInteractOutside` are deliberately NOT
+     * ignored, and Stryker reports them as no-coverage, because nothing
+     * exercises overlay dismissal at all. jsdom cannot: Radix sets
+     * `pointer-events: none` on <body>, so userEvent refuses the click
+     * (LEARNINGS §Testing — pointer/layout behaviour belongs in a real-browser
+     * smoke). Leaving them red keeps that gap on the report instead of burying
+     * it in an ignore list.
+     *
+     * All four are kept rather than thinned because `showClose={!pending}` is
+     * the only thing currently keeping the X button away from `onOpenChange`,
+     * and that is a rendering decision one prop-change away from being wrong.
+     */
     <Dialog
       open={open}
       onOpenChange={(next) => {
@@ -137,6 +167,7 @@ function ConfirmActionDialogRun({
         // while the action is in flight is refused outright. Radix routes
         // Escape, the overlay and the X through here, so refusing here covers
         // all three at once.
+        // Stryker disable next-line ConditionalExpression: redundant with onEscapeKeyDown for the only route a test can drive — see the note above.
         if (pending) return;
         onOpenChange(next);
       }}
@@ -144,9 +175,11 @@ function ConfirmActionDialogRun({
       <DialogTrigger asChild>{trigger}</DialogTrigger>
       <DialogContent
         showClose={!pending}
+        /* Stryker disable BlockStatement,ConditionalExpression: redundant with the onOpenChange refusal above; no test can attribute the proven Escape behaviour to one layer or the other. */
         onEscapeKeyDown={(event) => {
           if (pending) event.preventDefault();
         }}
+        /* Stryker restore BlockStatement,ConditionalExpression */
         onPointerDownOutside={(event) => {
           if (pending) event.preventDefault();
         }}
@@ -171,11 +204,13 @@ function ConfirmActionDialogRun({
           {state ? (
             <p
               role="status"
+              /* Stryker disable StringLiteral: Tailwind class names. This repo asserts on roles and text, never on class strings, so a test able to kill these would go red on any design-token rename while catching no behaviour change. What matters here — the result is announced, in place, via role="status" — is guard 4 and is tested. */
               className={
                 state.ok
                   ? "text-muted-foreground text-sm"
                   : "text-destructive text-sm"
               }
+              /* Stryker restore StringLiteral */
             >
               {state.message}
             </p>
@@ -205,6 +240,8 @@ function ConfirmActionDialogRun({
                 </Button>
                 <Button
                   type="submit"
+                  /* Stryker disable next-line StringLiteral: button colour
+                     variant names, same reason as the status paragraph above. */
                   variant={destructive ? "destructive" : "default"}
                   disabled={pending}
                 >
