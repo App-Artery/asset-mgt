@@ -288,7 +288,10 @@ describe.skipIf(!testDatabaseUrl)("asset assignment UI (real DB)", () => {
 
       expect(html).toContain(">Assign<");
       expect(html).toContain(">Send to repair<");
-      expect(html).toContain(">Retire<");
+      // AM-09: retire moved behind a confirm dialog, so the affordance is
+      // its trigger rather than an inline form heading. The assertion still
+      // says the same thing — this status offers retirement.
+      expect(html).toContain(">Retire asset…<");
       expect(html).not.toContain(">Take it back<");
       // The picker disambiguates by employeeRef, and carries no email.
       expect(html).toContain(personRef);
@@ -303,7 +306,10 @@ describe.skipIf(!testDatabaseUrl)("asset assignment UI (real DB)", () => {
       expect(html).toContain(">Take it back<");
       expect(html).toContain(">Back to stock<");
       expect(html).toContain(">Straight to repair<");
-      expect(html).toContain(">Retire<");
+      // AM-09: retire moved behind a confirm dialog, so the affordance is
+      // its trigger rather than an inline form heading. The assertion still
+      // says the same thing — this status offers retirement.
+      expect(html).toContain(">Retire asset…<");
       // Not a second, parallel path out of ASSIGNED.
       expect(html).not.toContain(">Send to repair<");
       expect(html).not.toContain(">Assign<");
