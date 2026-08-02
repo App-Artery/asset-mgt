@@ -72,9 +72,10 @@ red?_ Configuration, the triage of every surviving mutant, and how the
 breaking threshold was chosen are all in `stryker.config.mjs`.
 
 It is **not** part of the `ci` required check — most mutants cost a Postgres
-round-trip, so a full run is ~17 minutes locally. It runs weekly and on pull
-requests that touch a mutated module or its tests
-(`.github/workflows/mutation.yml`), and it can fail the build.
+round-trip, so a full run is ~10 minutes locally (9m50s over 382 mutants at the
+2026-08-02 triage). It runs weekly and on pull requests that touch a mutated
+module or its tests (`.github/workflows/mutation.yml`), and it can fail the
+build.
 
 **It requires `TEST_DATABASE_URL`, and refuses to start without it.** Three of
 the five modules are covered only by real-DB integration tests, which _skip_
