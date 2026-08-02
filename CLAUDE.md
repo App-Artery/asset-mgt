@@ -16,17 +16,29 @@ ADR: `docs/adr/ADR-001-vercel-neon-stack.md` · Stories: `docs/intake/asset-mgt/
   module top level anywhere — `pnpm build` must succeed with zero env
   populated (CI proves this every run). Optional Vercel platform metadata may
   be read inline with a null fallback.
-  **The edge runtime does not share this chokepoint.** `env()` imports
-  `server-only`, so `src/middleware.ts` cannot use it and reads
-  `process.env.AUTH_SECRET` directly. That asymmetry is the trap: middleware
-  is the one file where "go through `env()`" is the wrong answer.
-  Both files must use the lazy `NextAuth(() => …)` factory form. Under the
-  eager form the config — including Auth.js's own secret lookup — is evaluated
-  at module initialisation, which in the edge runtime is not a point where the
-  environment is reliably populated; the callback defers it to request time,
-  when it is. The same deferral is what keeps the env-free build passing. A
-  secret that fails to reach middleware produces no session at all and bounces
-  every user to /signin, which looks exactly like broken sign-in (issue #14).
+  **The edge runtime does not share this chokepoint, and this is a second
+  carve-out, not an instance of the first.** The metadata carve-out above
+  covers _optional_ platform values with a null fallback; `AUTH_SECRET` is
+  _required_ config with no safe fallback, so the rule is amended rather than
+  stretched. `env()` imports `server-only` — and zod-parses the whole of
+  `process.env`, demanding `DATABASE_URL` and `AUTH_RESEND_KEY` the edge has
+  no business requiring — so `src/middleware.ts` cannot use it.
+  `src/middleware.ts`'s `AUTH_SECRET` is therefore **the single permitted
+  inline read of required config in the codebase**, and it must be a literal
+  static `process.env.AUTH_SECRET` (no destructuring, no computed key, no
+  spreading `process.env`: only statically analysable references survive into
+  an edge bundle), read at request time, with no fallback and a loud throw
+  when absent. That asymmetry is the trap: middleware is the one file where
+  "go through `env()`" is the wrong answer.
+  Both auth entrypoints must use the lazy `NextAuth(() => …)` factory form.
+  The object form calls `setEnvDefaults` immediately, doing
+  `config.secret ??= process.env.AUTH_SECRET` at module scope — read once per
+  edge isolate at module evaluation, with the result (`undefined` included)
+  cached on the shared `authConfig` object for that isolate's life. The
+  callback defers it to request time, which is also what keeps the env-free
+  build passing. A secret that fails to reach middleware produces no session
+  at all and bounces every user to /signin, which looks exactly like broken
+  sign-in (issue #14).
 - **Authorisation:** `await requireRole(...)` (`src/lib/authz.ts`) is the FIRST
   statement of every mutating server action and route handler. Middleware
   (`src/middleware.ts`, edge-safe `src/auth.config.ts`, deny-by-default

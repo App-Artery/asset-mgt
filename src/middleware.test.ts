@@ -35,20 +35,49 @@ describe("middleware auth construction", () => {
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/\/\/.*$/gm, "");
 
-  it("passes a secret explicitly", () => {
-    // Auth.js infers AUTH_SECRET on its own, so the absence of this line is
+  it("reads AUTH_SECRET as a literal static member access", () => {
+    // Only statically analysable references survive into an edge bundle, so
+    // the spelling is load-bearing: no destructuring, no computed key, no
+    // spreading process.env.
+    expect(source).toMatch(/process\.env\.AUTH_SECRET/);
+    expect(source).not.toMatch(/\{\s*AUTH_SECRET\s*\}\s*=\s*process\.env/);
+    expect(source).not.toMatch(/process\.env\[/);
+  });
+
+  it("passes the secret into the config", () => {
+    // Auth.js infers AUTH_SECRET on its own, so the absence of this is
     // invisible until the inference fails in the edge runtime.
-    expect(source).toMatch(/secret:\s*process\.env\.AUTH_SECRET/);
+    expect(source).toMatch(/\.\.\.authConfig,\s*secret\b/);
   });
 
   it("constructs NextAuth with the lazy factory form", () => {
-    // The eager form evaluates the config — including the secret lookup — at
-    // module initialisation, which in the edge runtime is not a point where
-    // the environment is reliably populated. The callback defers it to request
-    // time. This is the actual fix for #14, and the thing most likely to be
-    // "simplified" away.
+    // The object form calls setEnvDefaults immediately, which does
+    // `config.secret ??= process.env.AUTH_SECRET` at module scope — reading
+    // once per edge isolate at module evaluation and caching the result,
+    // undefined included, on the shared authConfig object. The function form
+    // defers it to request time. This is the actual fix for #14, and the thing
+    // most likely to be "simplified" away.
     expect(source).toMatch(/NextAuth\(\s*\(\s*\)\s*=>/);
     expect(source).not.toMatch(/NextAuth\(\s*authConfig\s*\)/);
+  });
+
+  it("fails closed when the secret is absent", () => {
+    // No fallback and no derived default, ever: a derived secret would
+    // silently invalidate every existing session rather than say so. The
+    // throw is server-side only — /signin is excluded by the matcher, so the
+    // uniform sign-in message is untouched.
+    expect(source).toMatch(/if\s*\(\s*!secret\s*\)/);
+    expect(source).toMatch(/throw new Error\(/);
+    expect(source).toMatch(/AUTH_SECRET is not set/);
+  });
+
+  it("has no fallback secret", () => {
+    // Added because red-proving found the gap: with only the throw asserted
+    // above, `process.env.AUTH_SECRET ?? "dev-secret"` passed every test in
+    // this file. The throw becomes unreachable and middleware silently signs
+    // sessions with a known value — the worst outcome of the three, and the
+    // one the guards were least equipped to see.
+    expect(source).not.toMatch(/process\.env\.AUTH_SECRET\s*(\?\?|\|\|)/);
   });
 
   it("does not import the env() chokepoint", () => {

@@ -17,38 +17,53 @@ import { authConfig } from "@/auth.config";
  * imports "server-only", so importing it here would break the edge bundle.
  * Middleware is the one place in the app that reads configuration directly.
  *
- * What actually fixes this is the lazy factory form, and the reason is WHEN
- * the read happens, not where the value comes from. Auth.js infers AUTH_SECRET
- * from the environment on its own — but under the previous eager
- * `NextAuth(authConfig)` call that inference ran at module initialisation of
- * the edge bundle, which is not a point at which the runtime environment is
- * reliably populated. Wrapping the config in a callback defers the whole
- * thing to request time, when it is. Production showed an 18-occurrence
- * MissingSecret group on /middleware (2026-07-28 → 07-30) under the eager
- * form (issue #14); src/auth.ts has always used the lazy form and has never
- * shown it.
+ * What fixes this is the lazy factory form, and the reason is WHEN the read
+ * happens. `NextAuth(config)` with an OBJECT calls `setEnvDefaults`
+ * immediately, which does `config.secret ??= process.env.AUTH_SECRET` — at
+ * module scope. So the secret is read once per edge isolate at module
+ * evaluation, and the result, `undefined` included, is then cached on the
+ * shared `authConfig` object for that isolate's whole life. With the FUNCTION
+ * form the same defaulting runs per request. Production showed an
+ * 18-occurrence MissingSecret group on /middleware (2026-07-28 → 07-30) under
+ * the object form; src/auth.ts has always used the function form and has
+ * never shown it.
  *
- * Verified against the built bundle, not assumed: `.next/server/src/
+ * The spread matters for the same reason: it stops `setEnvDefaults` mutating
+ * the `authConfig` object that src/auth.ts also imports.
+ *
+ * `process.env.AUTH_SECRET` is written out as a literal static member access
+ * on purpose — no destructuring, no computed key, no spreading `process.env`,
+ * because only statically analysable references survive into an edge bundle.
+ * Verified against the build rather than assumed: `.next/server/src/
  * middleware.js` contains the string `process.env.AUTH_SECRET` and does NOT
- * contain the secret's value. So this is a live read in the edge runtime, and
- * no secret is baked into a build artefact.
+ * contain the secret's value, so this is a live read at the edge and nothing
+ * is baked into a build artefact.
  *
- * The failure mode is why this is worth pre-empting rather than watching: with
- * no secret, middleware decodes no session, sees every request as anonymous,
- * and bounces every authenticated user to /signin. That is indistinguishable
- * from a broken sign-in — a much larger and more alarming diagnosis, and it
- * cost a full debugging session once already. Hobby-plan runtime logs retain
- * one hour, so it has to be caught live or not at all.
+ * The lazy form is also what keeps this inside the env rule: the read happens
+ * per request, never at module top level, so `next build` still succeeds with
+ * no environment populated (CI proves this every run).
  *
- * The lazy factory form is what keeps this inside the env rule: the read
- * happens per request inside the callback, never at module top level, so
- * `next build` still succeeds with no environment populated (CI proves this
- * every run). Same shape as src/auth.ts, which wraps env() the same way.
+ * Fails closed, loudly, and server-side only. There is no fallback and no
+ * derived default — that would silently invalidate every existing session
+ * instead of saying so. A throw naming the variable is diagnosable in
+ * minutes; the alternative is middleware decoding no session, treating every
+ * request as anonymous, and bouncing every authenticated user to /signin,
+ * which is indistinguishable from broken sign-in and cost a full debugging
+ * session once already (Hobby-plan runtime logs retain one hour, so it has to
+ * be caught live or not at all). /signin is excluded by the matcher below, so
+ * it still renders and the uniform sign-in message is untouched — this adds
+ * no user-visible error surface.
  */
-export default NextAuth(() => ({
-  ...authConfig,
-  secret: process.env.AUTH_SECRET,
-})).auth;
+export default NextAuth(() => {
+  const secret = process.env.AUTH_SECRET;
+  if (!secret) {
+    throw new Error(
+      "AUTH_SECRET is not set in the edge runtime. Middleware cannot verify " +
+        "sessions without it and would treat every request as anonymous.",
+    );
+  }
+  return { ...authConfig, secret };
+}).auth;
 
 export const config = {
   // /signin is the ONLY public page (uniform magic-link flow, AM-01);
