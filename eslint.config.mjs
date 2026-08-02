@@ -21,6 +21,13 @@ const eslintConfig = [
       "build/**",
       "coverage/**",
       "next-env.d.ts",
+      // Agent worktrees are created under .claude/worktrees/, i.e. INSIDE the
+      // repo. They are gitignored, but eslint does not read .gitignore — so a
+      // full-repo sweep walks straight into another branch's working copy and
+      // lints code that is not on this branch at all. `.husky/pre-push` runs
+      // `pnpm lint && pnpm typecheck` over everything, so without this a push
+      // from the main checkout fails on errors belonging to a parallel task.
+      ".claude/**",
     ],
   },
 ];
