@@ -110,3 +110,28 @@ ADR: `docs/adr/ADR-001-vercel-neon-stack.md` · Stories: `docs/intake/asset-mgt/
   env-free build) is the required check on `main`.
 - Security-touching work (auth, PII, deletion) floors at Tier 3 — advisor
   review before merge. First story: AM-01.
+- **What satisfies the T3 gate.** A ruling from the `advisor` agent obtained
+  before merge, with every condition it names either met or explicitly
+  overruled **in the PR body, one by one, in writing**. The gate is not "an
+  advisor was consulted" — an unanswered condition is an unmet gate. Ask for a
+  ruling with conditions in that shape and the review is checkable by anyone.
+- **Red-prove every guard a condition names**, by deleting the production line
+  that defends it and watching the test fail. A ruling does not make its own
+  conditions true: on #14 the advisor's "no fallback, ever" condition was
+  implemented and guarded, and `?? "dev-secret"` still passed the whole file —
+  throw unreachable, sessions signed with a known value. Guards written to
+  satisfy a ruling fail the same way as any other (see #12).
+- **If the advisor is genuinely unavailable**, the floor is satisfied instead
+  by all three of: the guards enumerated in the design doc _before_
+  implementation, Kelvin's recorded decision naming that specific list, and
+  each guard proven red. "No advisor available, so we skipped it" is not a
+  resolution — it is the thing this clause exists to prevent. Precedent and
+  worked example: `docs/features/AM-09/DESIGN.md` §7.
+- The advisor was non-responsive throughout AM-09 (2026-08-02), which is what
+  prompted the clause above. It was re-tested on 2026-08-02 and is **working**:
+  a full three-question T3 consult returned in ~9 minutes and a trivial probe
+  in ~4 seconds, with and without an explicit model override. The
+  invalid-`model:`-fails-silently theory recorded in the studio LEARNINGS
+  §Tooling is **ruled out for this agent** — its frontmatter is valid. Root
+  cause of the AM-09 failure remains unknown and unreproduced, so if it
+  recurs, fall back rather than spending the session diagnosing it.
