@@ -237,16 +237,16 @@ red-proved.
 
 ## 8. What shipped
 
-| §   | Change                                   | State                         |
-| --- | ---------------------------------------- | ----------------------------- |
-| 4.1 | Vocabulary + one source of truth         | shipped                       |
-| 4.2 | Register: estate bar, sort, sticky       | shipped                       |
-| 4.3 | Asset page: custody, timeline, edit mode | shipped                       |
-| 4.4 | Users: role labels, guarded deactivation | shipped                       |
-| 4.5 | Categories &amp; sites                   | shipped                       |
-| 5   | Destructive confirmations                | shipped on the decision above |
-| —   | Search, pagination                       | deferred: #7, #8              |
-| —   | "Last signed in"                         | deferred: needs a column      |
+| §   | Change                                   | State                                         |
+| --- | ---------------------------------------- | --------------------------------------------- |
+| 4.1 | Vocabulary + one source of truth         | shipped                                       |
+| 4.2 | Register: estate bar, sort, sticky       | shipped                                       |
+| 4.3 | Asset page: custody, timeline, edit mode | shipped; lifecycle forms still expanded — #10 |
+| 4.4 | Users: role labels, guarded deactivation | shipped; Add user still expanded — #10        |
+| 4.5 | Categories &amp; sites                   | shipped                                       |
+| 5   | Destructive confirmations                | shipped on the decision above                 |
+| —   | Search, pagination                       | deferred: #7, #8                              |
+| —   | "Last signed in"                         | deferred: #11 (needs a column)                |
 
 Verification actually performed: full suite (289 tests) green against real
 Postgres; typecheck; lint; production build; every surface screenshotted at 1440
