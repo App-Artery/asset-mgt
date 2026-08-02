@@ -1,4 +1,5 @@
 import { requireRole } from "@/lib/authz";
+import { lastLinkSentByEmail } from "@/lib/last-link-sent";
 import { getDb } from "@/lib/db";
 import { AddUserForm } from "./add-user-form";
 import { UsersTable, type AdminUserRow } from "./users-table";
@@ -83,22 +84,13 @@ export default async function AdminUsersPage() {
   ]);
 
   /**
-   * Keyed on the lowercased address on BOTH sides. `@auth/core` normalises the
-   * identifier before insert (lib/actions/signin/send-token.js) and user
-   * emails are lowercased at every write (CLAUDE.md) — but matching raw would
-   * turn any row that predates either rule into a silent "never invited",
-   * which is the one answer this column must never get wrong.
+   * Lowercased on BOTH sides — see `src/lib/last-link-sent.ts`, which is a
+   * module rather than four lines here so the newest-wins comparison can be
+   * fed both input orders. A real-DB test cannot demonstrate it: `groupBy`
+   * order is unspecified, and the integration test written for it passed
+   * against a plain last-write-wins `set`.
    */
-  const lastLinkSentByEmail = new Map<string, Date>();
-  for (const send of linkSends) {
-    const sentAt = send._max.createdAt;
-    if (!sentAt) continue;
-    const identifier = send.identifier.trim().toLowerCase();
-    const seen = lastLinkSentByEmail.get(identifier);
-    if (!seen || sentAt > seen) {
-      lastLinkSentByEmail.set(identifier, sentAt);
-    }
-  }
+  const linkSentByEmail = lastLinkSentByEmail(linkSends);
 
   const rows: AdminUserRow[] = users.map((user) => ({
     id: user.id,
@@ -109,7 +101,7 @@ export default async function AdminUsersPage() {
     deactivated: user.deactivatedAt !== null,
     lastSignInAt: user.emailVerified,
     lastLinkSentAt:
-      lastLinkSentByEmail.get(user.email.trim().toLowerCase()) ?? null,
+      linkSentByEmail.get(user.email.trim().toLowerCase()) ?? null,
   }));
 
   return (

@@ -29,16 +29,27 @@ describe.skipIf(!testDatabaseUrl)("sign-in policy (real DB)", () => {
     });
     db = new PrismaClient({ datasourceUrl: testDatabaseUrl });
     // Clear leftover tokens from previous local runs so the global-window
-    // count starts from a known state. The throttle's caps are global, so
-    // there is no scoped `where` that would do — this has to be the whole
-    // table.
+    // count starts from a known state.
     //
-    // It is therefore NOT true any more that only this file writes tokens:
+    // THE WIPE MUST STAY UNSCOPED. The throttle's caps are global, so no
+    // `where` can express "only mine" — and a polite one added later to spare
+    // another file's rows would leave those rows behind and inflate the global
+    // window count, which is the exact failure this line exists to prevent.
+    //
+    // It is no longer true that only this file writes tokens:
     // src/app/(app)/admin/users/page.integration.test.tsx creates them too
-    // (issue #11). That file is written to survive this line — every fixture
-    // it uses is created inside the test that reads it — and this one is
-    // unaffected by its leftovers, because this wipe runs first. Keep both
-    // halves of that arrangement if either file changes.
+    // (issue #11). Both files are safe in EITHER order, and the reasons are
+    // order-independent — `fileParallelism: false` guarantees files do not
+    // interleave, not which one runs first, and no `sequence.sequencer` is
+    // configured:
+    //
+    //   - this file is safe whenever it runs, because its own beforeAll wipes
+    //     everything;
+    //   - that file is safe because nothing can interleave with it, and every
+    //     fixture it uses is created inside the test that reads it rather
+    //     than staged in a beforeAll.
+    //
+    // Keep both halves if either file changes.
     await db.verificationToken.deleteMany({});
   });
 

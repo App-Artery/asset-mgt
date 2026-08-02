@@ -32,7 +32,10 @@ export type AdminUserRow = {
   lastSignInAt: Date | null;
   /**
    * When a magic link was last ISSUED for this address, from a surviving
-   * `VerificationToken` row. Null is "no unredeemed link outstanding".
+   * `VerificationToken` row. Null is "no unredeemed link on record" — a
+   * statement about the past, NOT a live invitation. The rendered copy stays
+   * past-tense fact ("Link sent 5 days ago"); never "Invite pending" or
+   * "Awaiting sign-in", which would claim something this data cannot support.
    */
   lastLinkSentAt: Date | null;
 };

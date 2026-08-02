@@ -220,6 +220,14 @@ describe.skipIf(!testDatabaseUrl)("admin users page — last signed in", () => {
     expect(row).not.toContain(exactTimestamp(oldest));
   });
 
+  // NOTE: there is deliberately no real-DB test for "two identifiers differing
+  // only in case resolve to the newest". One was written and it passed against
+  // a plain last-write-wins `set` — `groupBy` returns no promised order, so it
+  // was asserting against the planner, not the code. That comparison is proven
+  // deterministically in `src/lib/last-link-sent.test.ts`, which feeds it both
+  // permutations. A green test that cannot fail is the thing issue #12 exists
+  // to stop shipping.
+
   it("never puts a magic-link token in the page", async () => {
     // `token` is the bearer credential in the emailed link. The query selects
     // identifier and createdAt only; this is the assertion that stays true if

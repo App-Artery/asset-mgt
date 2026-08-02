@@ -21,7 +21,16 @@ import { isSignInAllowed } from "@/lib/sign-in-policy";
  *
  * Still the lazy factory form NextAuth requires (CLAUDE.md) — named and
  * exported only so a test can read the provider list without standing up an
- * HTTP request.
+ * HTTP request. `NextAuth(authOptions)` passes the REFERENCE: next-auth sees
+ * `typeof config === "function"` and takes the lazy branch, so setEnvDefaults
+ * runs per request, not at module scope. `NextAuth(authOptions())` would undo
+ * that and is the bug issue #14 was about.
+ *
+ * HAZARD the export creates: a named factory looks safe to call anywhere, and
+ * a module-scope `authOptions()` in some future file would read env() at
+ * module top level — breaking the env-free build. CI catches it, but the
+ * instinct is reasonable enough to warrant saying so here. Call it inside a
+ * request, or not at all.
  *
  * `/admin/users` reads `User.emailVerified` as "last successful magic-link
  * sign-in", which is only true while the magic link is the ONLY way in: the
