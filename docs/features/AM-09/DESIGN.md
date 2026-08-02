@@ -248,7 +248,7 @@ red-proved.
 | —   | Search, pagination                       | deferred: #7, #8                              |
 | —   | "Last signed in"                         | deferred: #11 (needs a column)                |
 
-Verification actually performed: full suite (289 tests) green against real
+Verification actually performed: full suite (295 tests) green against real
 Postgres; typecheck; lint; production build; every surface screenshotted at 1440
 and 390 against its mockup frame; each new guard red-proved against its own
 window.
