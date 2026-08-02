@@ -40,10 +40,15 @@ export function relativeTime(value: Date, now: Date): string {
   if (days === 1) return "yesterday";
   if (days < 30) return `${days} days ago`;
 
+  // Each unit is derived from the one below it, never from `elapsed` again.
+  // Deriving months from a 30-day month and years from a 365-day year let the
+  // two disagree: at 360 days `days / 30` is already 12 while `days / 365` is
+  // still 0, so five days a year rendered "0 years ago". One cascade, one
+  // boundary, nothing to keep in step.
   const months = Math.floor(days / 30);
   if (months < 12) return months === 1 ? "1 month ago" : `${months} months ago`;
 
-  const years = Math.floor(days / 365);
+  const years = Math.floor(months / 12);
   return years === 1 ? "1 year ago" : `${years} years ago`;
 }
 

@@ -19,10 +19,30 @@ describe("relativeTime", () => {
     [29 * DAY, "29 days ago"],
     [30 * DAY, "1 month ago"],
     [90 * DAY, "3 months ago"],
+    [359 * DAY, "11 months ago"],
+    // The window that used to render "0 years ago". `days / 30` reaches 12 at
+    // 360 days while `days / 365` is still 0, so the two units disagreed for
+    // five days a year and the disagreement was user-visible. Every unit now
+    // cascades from the one below it, which is what makes the boundary a single
+    // place rather than two that can drift.
+    [360 * DAY, "1 year ago"],
+    [364 * DAY, "1 year ago"],
+    [365 * DAY, "1 year ago"],
     [400 * DAY, "1 year ago"],
     [800 * DAY, "2 years ago"],
   ])("renders %i ms ago as %s", (elapsed, expected) => {
     expect(relativeTime(ago(elapsed), now)).toBe(expected);
+  });
+
+  it("never renders a zero quantity", () => {
+    // The failure this pins is not "360 days is wrong" but the CLASS of it: a
+    // phrase like "0 years ago" tells the reader nothing and looks like a bug
+    // in the record, not in the formatter. Swept across two years of daily
+    // values so a future boundary change cannot reintroduce it somewhere else.
+    for (let days = 0; days <= 730; days++) {
+      const phrase = relativeTime(ago(days * DAY), now);
+      expect(phrase, `${days} days`).not.toMatch(/\b0\b/);
+    }
   });
 
   it("never says a negative amount of time", () => {

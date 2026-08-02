@@ -31,10 +31,22 @@ condition, role and event type shout their enums in the next column.
 
 ## 2. Scope
 
-Presentation only. **No query is changed, no authorisation surface moves, no
-migration.** The role-conditional holder fetch in the register stays exactly as
-written, including the deliberate absence of a `canSeeHolders ?` in the row
-mapping.
+Presentation. **No authorisation surface moves and there is no migration.** The
+role-conditional holder fetch in the register stays exactly as written,
+including the deliberate absence of a `canSeeHolders ?` in the row mapping, and
+`requireRole` remains the first statement of every mutating action.
+
+**Two queries do change, and calling this "presentation only" would be
+inaccurate** — the distinction that matters for the tier is _who can see what_,
+not _no SQL moved_:
+
+- the register's `orderBy` becomes `orderByFor(sort, dir)` instead of a fixed
+  `createdAt desc`, because sorting is the feature;
+- a `groupBy` on status is added for the estate bar's counts.
+
+Neither changes which rows a role may read, which columns are selected, or which
+tables are touched for a `STAFF_RO` viewer. That is the claim the T3 scope rests
+on, and it is the one worth stating precisely.
 
 In:
 
@@ -72,12 +84,17 @@ Every change below is an application of one of these.
 
 ## 4. Surface specs
 
-### 4.1 Vocabulary (`src/lib/asset-lifecycle.ts`, `src/lib/roles.ts`)
+### 4.1 Vocabulary (`src/lib/labels.ts`, `src/lib/asset-lifecycle.ts`)
 
-`CONDITION_LABELS` joins `STATUS_LABELS` in `asset-lifecycle.ts` — client-safe,
-type-only Prisma import. `ROLE_LABELS` goes in a new client-safe `src/lib/roles.ts`
-rather than into `authz.ts`, which is `server-only`. `EVENT_TYPE_LABELS` sits
-beside the asset history that consumes it.
+`CONDITION_LABELS`, `ROLE_LABELS` and `EVENT_TYPE_LABELS` all live in one new
+client-safe `src/lib/labels.ts` — its only Prisma import is a type, so no Prisma
+runtime reaches the browser bundle. (An earlier draft of this section split them
+across `asset-lifecycle.ts` and a `roles.ts` that was never created; one module
+for the three of them is what shipped.)
+
+`STATUS_LABELS` deliberately stays in `asset-lifecycle.ts`, beside the transition
+map: status labels and status transitions must not drift apart. The rule is one
+label map per enum, not one module for all of them.
 
 Each is typed `Record<Enum, string>`, so a new enum member fails the build
 rather than rendering raw.

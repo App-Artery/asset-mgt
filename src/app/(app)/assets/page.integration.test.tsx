@@ -272,6 +272,20 @@ describe.skipIf(!testDatabaseUrl)("asset register page (real DB)", () => {
       expect(html).not.toContain(inStockTag);
     });
 
+    it("announces which status filter is active", async () => {
+      await signInAs(Role.FINANCE);
+
+      const unfiltered = await renderRegister({});
+      expect(unfiltered).not.toContain("aria-current");
+
+      const filtered = await renderRegister({ status: AssetStatus.ON_ORDER });
+      // `aria-current`, not `aria-pressed`: the chips are links, and
+      // aria-pressed carries meaning only on role="button" — so the first
+      // version of this announced the active filter as nothing at all.
+      expect(filtered).toContain('aria-current="true"');
+      expect(filtered).not.toContain("aria-pressed");
+    });
+
     it("keeps untagged assets last in BOTH directions", async () => {
       await signInAs(Role.FINANCE);
 

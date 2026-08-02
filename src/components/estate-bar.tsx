@@ -122,7 +122,12 @@ export function EstateBar({
             <Link
               key={status}
               href={hrefFor(isActive ? null : status)}
-              aria-pressed={isActive}
+              // `aria-current`, not `aria-pressed`: these are links, and
+              // aria-pressed only carries meaning on role="button". On an
+              // anchor it is ignored, so the active filter would have been
+              // announced as nothing at all. `aria-current` is the attribute
+              // for "this is the one you are on" among a set of links.
+              aria-current={isActive ? "true" : undefined}
               className={cn(
                 "focus-visible:ring-ring inline-flex items-center gap-1.5 rounded-full border border-transparent px-2.5 py-1 text-xs font-medium whitespace-nowrap focus-visible:ring-2 focus-visible:outline-none",
                 CHIP_TONE[status],
