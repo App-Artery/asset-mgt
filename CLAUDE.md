@@ -51,6 +51,17 @@ ADR: `docs/adr/ADR-001-vercel-neon-stack.md` · Stories: `docs/intake/asset-mgt/
   guarantee, and it is the one place §`STAFF_RO`-sees-no-person-data can
   be bypassed. **Any feature that indexes or searches `AssetEvent.notes`
   must exclude it from `STAFF_RO` reach, or close this first** (AM-07).
+  **AM-07 settled it by leaving `notes` unsearchable, and it stays that
+  way.** The register's `?q=` (`src/lib/asset-search.ts`) traverses tag,
+  serial, make, model and category name only, and the enforcement is
+  behavioural rather than a grep: a real-DB test in
+  `src/app/(app)/assets/page.integration.test.tsx` seeds a nonce into a
+  note and asserts a search for it returns zero assets for **every** role
+  including `ADMIN_IT`. A grep-guard passes the moment someone reaches
+  `notes` through a relation filter spelled differently; that test does
+  not. Same story reached `?q=` for holder names — it does not search
+  them for any role, and no such predicate may be added to `/assets`
+  without a new advisor ruling.
 - **Nothing in this codebase is ever deleted.** `RETIRED` is an asset's delete
   (`db.asset.delete()` appears nowhere and must not); `deactivatedAt` is a
   user's; categories and sites are renamed, never removed. A delete would

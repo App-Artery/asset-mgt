@@ -680,6 +680,55 @@ describe.skipIf(!testDatabaseUrl)("asset register page (real DB)", () => {
       );
     });
 
+    it("keeps the search when paging, and starts a new search at page 1", async () => {
+      await signInAs(Role.FINANCE);
+
+      // `q` matches all 108 fixture tags, so the search itself spans three
+      // pages — the only shape in which "paging preserved the search" and
+      // "a new search resets the page" are different statements.
+      const html = await renderRegister({ q: tagPrefix, page: "2" });
+      expect(html).toContain("Page 2 of 3");
+
+      // The pager is the one control that may carry the page, and it must
+      // carry the search with it — a next link that dropped `q` would page a
+      // reader out of their own search results into the whole register.
+      const paged = [...html.matchAll(/href="([^"]*page=[^"]*)"/g)].map(
+        (m) => m[1],
+      );
+      expect(paged).toEqual([`/assets?q=${tagPrefix}&amp;page=3`]);
+
+      // …and the search box submits through the filter form, which has no
+      // hidden page input. That absence IS the reset: typing a new term on
+      // page 2 cannot land you on page 2 of a set that may not have one.
+      expect(html).toContain('name="q"');
+      expect(html).not.toContain('name="page"');
+    });
+
+    it("counts the search results in the estate bar, and the search AND status in the footer", async () => {
+      await signInAs(Role.FINANCE);
+
+      // The `scopeFilters`-vs-`where` decision for `q`, asserted rather than
+      // just commented. `q` sits with category and site on the SCOPE side:
+      // the estate bar breaks down the set you are looking at, and while a
+      // search is running that set is the search results. If `q` had been put
+      // in `where` only, these two labels would count the whole table — this
+      // database held 4,771 assets when the test was written, so the failure
+      // would be unmissable rather than off-by-a-little.
+      const html = await renderRegister({
+        q: tagPrefix,
+        status: AssetStatus.IN_STOCK,
+      });
+
+      expect(html).toContain(`aria-label="In stock, ${TRACKED} of ${TOTAL}"`);
+      expect(html).toContain(`aria-label="On order, ${ON_ORDER} of ${TOTAL}"`);
+
+      // The footer counts the data query's own WHERE — search AND status —
+      // because the count query shares that exact object (count-query parity,
+      // LEARNINGS §Prisma). The header says what that number is a subset of.
+      expect(html).toContain(`1–${PAGE_SIZE} of ${TRACKED} assets`);
+      expect(html).toContain(`${TRACKED} of ${TOTAL}`);
+    });
+
     it("fetches holders for the rendered page only, and none at all for STAFF_RO", async () => {
       // The holder query is scoped by the ids of the rows it just fetched, so
       // pagination made it page-sized for free. This asserts it stayed that
@@ -695,6 +744,377 @@ describe.skipIf(!testDatabaseUrl)("asset register page (real DB)", () => {
       const admin = await renderRegister({ siteId });
       expect(admin).toContain("Held by");
       expect(admin).toContain(holderName);
+    });
+  });
+
+  // AM-07 / issue #7 — the `?q=` lookup.
+  //
+  // The T3 ruling on that issue removed holder-name search from `/assets`
+  // entirely rather than gating it by role, so `?q=` is asset-attribute-only
+  // and role-INDEPENDENT. The two guards that matter here are therefore
+  // behavioural and symmetric: the same term returns the same assets to every
+  // role, and event notes are not reachable by any of them.
+  describe("search", () => {
+    let searchSiteId: string;
+    let searchCategoryId: string;
+    let dockCategoryId: string;
+    /** Unique to this run: the database is never truncated. */
+    let prefix: string;
+    let token: string;
+    let dockToken: string;
+    let holderToken: string;
+    let noteNonce: string;
+
+    let laptopTag: string;
+    let laptopId: string;
+    let laptopSerial: string;
+    let heldId: string;
+    let notedId: string;
+    let dockId: string;
+    /** Every fixture asset below, which is what a `${prefix}` search returns. */
+    let allIds: string[];
+
+    beforeAll(async () => {
+      token = randomUUID().slice(0, 8).toUpperCase();
+      dockToken = randomUUID().slice(0, 8).toUpperCase();
+      holderToken = randomUUID().slice(0, 8).toUpperCase();
+      noteNonce = `NOTE${randomUUID().slice(0, 12).toUpperCase()}`;
+      prefix = `SRCH${token}`;
+
+      const [category, dockCategory, site] = await Promise.all([
+        db.category.create({ data: { name: `Search ${randomUUID()}` } }),
+        // The category-name search target. Its distinctive token appears in NO
+        // asset field, so a hit on it can only have come through the category
+        // relation.
+        db.category.create({ data: { name: `Docking ${dockToken}` } }),
+        db.site.create({ data: { name: `Search site ${randomUUID()}` } }),
+      ]);
+      searchCategoryId = category.id;
+      dockCategoryId = dockCategory.id;
+      searchSiteId = site.id;
+
+      laptopTag = `${prefix}-LAPTOP01`;
+      laptopSerial = `${prefix}-SER01`;
+
+      // One asset per searchable field, so a hit names the field it came from.
+      // Distinct tag stems (LAPTOP/DESK/REPAIR/DOCK) rather than a shared
+      // numbering, so a partial-tag search can single one out.
+      const [laptop, held, noted, dock] = await Promise.all([
+        db.asset.create({
+          data: {
+            categoryId: searchCategoryId,
+            siteId: searchSiteId,
+            tag: laptopTag,
+            serial: laptopSerial,
+            make: `Lenovo${token}`,
+            // Two words on purpose: the whitespace-normalisation test needs a
+            // value with a real internal space to collapse a term against.
+            model: `ThinkPad ${token}`,
+            status: AssetStatus.IN_STOCK,
+          },
+        }),
+        db.asset.create({
+          data: {
+            categoryId: searchCategoryId,
+            siteId: searchSiteId,
+            tag: `${prefix}-DESK02`,
+            make: `Dell${token}`,
+            model: "Latitude",
+            status: AssetStatus.ASSIGNED,
+          },
+        }),
+        db.asset.create({
+          data: {
+            categoryId: searchCategoryId,
+            siteId: searchSiteId,
+            tag: `${prefix}-REPAIR03`,
+            make: `Acer${token}`,
+            model: "Aspire",
+            status: AssetStatus.IN_REPAIR,
+          },
+        }),
+        db.asset.create({
+          data: {
+            categoryId: dockCategoryId,
+            siteId: searchSiteId,
+            tag: `${prefix}-DOCK04`,
+            make: `Kensington${token}`,
+            model: "Dock",
+            status: AssetStatus.IN_STOCK,
+          },
+        }),
+      ]);
+      laptopId = laptop.id;
+      heldId = held.id;
+      notedId = noted.id;
+      dockId = dock.id;
+      allIds = [laptopId, heldId, notedId, dockId];
+
+      // A real open holder record for the role-symmetry test. Its name token is
+      // deliberately NOT the asset token: searching it must be a statement
+      // about the holder's name alone, with nothing in any asset column able to
+      // match it by accident and make the test pass for the wrong reason.
+      const holder = await db.person.create({
+        data: {
+          name: `Grace Wanjiru ${holderToken}`,
+          email: `grace-${randomUUID()}@example.com`,
+        },
+      });
+      await db.assignment.create({
+        data: { assetId: heldId, personId: holder.id },
+      });
+
+      // An event note carrying a nonce — the field CLAUDE.md names as the one
+      // place a human can type a name into an append-only table.
+      await db.assetEvent.create({
+        data: {
+          assetId: notedId,
+          type: "STATUS_CHANGED",
+          fromStatus: AssetStatus.IN_STOCK,
+          toStatus: AssetStatus.IN_REPAIR,
+          notes: `Screen flicker ${noteNonce}`,
+        },
+      });
+    });
+
+    /**
+     * The asset ids a render links to, deduped and sorted.
+     *
+     * Each row is linked twice (table and card list) and `/assets/new` is a
+     * link to a page rather than to an asset, so both are filtered out. Sorted
+     * because these are compared as SETS — the role-symmetry test is about
+     * which assets came back, not the order the sort put them in.
+     */
+    const assetIdsIn = (html: string) =>
+      [
+        ...new Set(
+          [...html.matchAll(/href="\/assets\/([^"?]+)"/g)].map((m) => m[1]),
+        ),
+      ]
+        .filter((id) => id !== "new")
+        .sort();
+
+    it("matches tag, serial, make, model and category name", async () => {
+      await signInAs(Role.FINANCE);
+
+      const cases: [string, string, string[]][] = [
+        // A partial tag, not the whole one — the whole one redirects.
+        ["tag", `${prefix}-LAPTOP`, [laptopId]],
+        ["serial", laptopSerial, [laptopId]],
+        // Lower-cased: the register stores `Lenovo…`, and Postgres LIKE is
+        // case-sensitive without `mode: "insensitive"`.
+        ["make", `lenovo${token}`.toLowerCase(), [laptopId]],
+        ["model", `thinkpad ${token}`.toLowerCase(), [laptopId]],
+        // Reached only through the category relation: this token is in no
+        // asset column.
+        ["category name", dockToken, [dockId]],
+        // …and the shared stem returns all four, which is what the scoped
+        // assertions elsewhere in this block rely on.
+        ["every fixture", prefix, allIds],
+      ];
+
+      for (const [field, q, expected] of cases) {
+        const html = await renderRegister({ q, siteId: searchSiteId });
+        expect(assetIdsIn(html), `searching ${field}`).toEqual(
+          [...expected].sort(),
+        );
+      }
+    });
+
+    it("collapses whitespace before matching", async () => {
+      await signInAs(Role.FINANCE);
+
+      // `contains` is whitespace-sensitive (LEARNINGS §Zod), so a term pasted
+      // out of a spreadsheet matches nothing at all without this — and the
+      // failure is a silently empty register, not an error.
+      const html = await renderRegister({
+        q: `   thinkpad    ${token}  `,
+        siteId: searchSiteId,
+      });
+      expect(assetIdsIn(html)).toEqual([laptopId]);
+    });
+
+    it("returns the same assets to every role, whatever the term", async () => {
+      // ADVISOR CONDITION 3. Deliberately stronger than "STAFF_RO gets the
+      // unfiltered register": this fails for ANY role-dependent search
+      // behaviour, not only for the holder-name predicate we thought of.
+      //
+      // Scoped to the fixture site so the two sets are small and the
+      // comparison is about these four assets rather than about page 1 of a
+      // 4,771-row table.
+      const terms = ["grace", `Grace Wanjiru ${holderToken}`, prefix];
+      for (const q of terms) {
+        const perRole: Record<string, string[]> = {};
+        for (const role of [
+          Role.ADMIN_IT,
+          Role.PROCUREMENT,
+          Role.FINANCE,
+          Role.STAFF_RO,
+        ]) {
+          await signInAs(role);
+          perRole[role] = assetIdsIn(
+            await renderRegister({ q, siteId: searchSiteId }),
+          );
+        }
+        expect(perRole[Role.ADMIN_IT], `searching "${q}"`).toEqual(
+          perRole[Role.STAFF_RO],
+        );
+        expect(perRole[Role.PROCUREMENT]).toEqual(perRole[Role.STAFF_RO]);
+        expect(perRole[Role.FINANCE]).toEqual(perRole[Role.STAFF_RO]);
+      }
+
+      // Symmetry alone would also be satisfied by a search that returned
+      // everything to everybody, so state the substance too: the holder's name
+      // finds nothing, for the role most able to see it.
+      await signInAs(Role.ADMIN_IT);
+      expect(
+        assetIdsIn(
+          await renderRegister({
+            q: `Grace Wanjiru ${holderToken}`,
+            siteId: searchSiteId,
+          }),
+        ),
+      ).toEqual([]);
+    });
+
+    it("keeps the held asset reachable by its own attributes", async () => {
+      // The reachability half of the test above. Without it, both assertions
+      // there pass if the fixture asset simply is not in the register at all
+      // — a fixture that cannot reach the asserted state is not a guard
+      // (LEARNINGS §Testing).
+      await signInAs(Role.ADMIN_IT);
+      const html = await renderRegister({
+        q: `${prefix}-DESK`,
+        siteId: searchSiteId,
+      });
+      expect(assetIdsIn(html)).toEqual([heldId]);
+      // And the holder really is attached, so "no hit for the name" is a
+      // statement about the predicate rather than about an empty fixture.
+      expect(html).toContain(`Grace Wanjiru ${holderToken}`);
+    });
+
+    it("never matches an event note, for any role", async () => {
+      // ADVISOR CONDITION 4. Behavioural, not a grep: a grep-guard over the
+      // search module passes the moment somebody reaches `notes` through a
+      // relation filter spelled differently.
+      //
+      // The note exists and really carries the nonce — asserted against the
+      // database rather than assumed, because a silently failed fixture insert
+      // would make every assertion below vacuously true.
+      const event = await db.assetEvent.findFirst({
+        where: { assetId: notedId, notes: { contains: noteNonce } },
+      });
+      expect(event).not.toBeNull();
+
+      // STAFF_RO first, unlike the other role loops in this file: it is the
+      // role the notes hole actually threatens, so it is the one whose failure
+      // should be the reported one when this goes red.
+      for (const role of [
+        Role.STAFF_RO,
+        Role.PROCUREMENT,
+        Role.FINANCE,
+        Role.ADMIN_IT,
+      ]) {
+        await signInAs(role);
+        const html = await renderRegister({
+          q: noteNonce,
+          siteId: searchSiteId,
+        });
+        expect(assetIdsIn(html), `as ${role}`).toEqual([]);
+        expect(html).toContain("No assets match");
+      }
+
+      // …while the asset carrying that note is otherwise perfectly findable,
+      // so the zeroes above are about the notes column and nothing else.
+      await signInAs(Role.STAFF_RO);
+      expect(
+        assetIdsIn(
+          await renderRegister({
+            q: `${prefix}-REPAIR`,
+            siteId: searchSiteId,
+          }),
+        ),
+      ).toEqual([notedId]);
+    });
+
+    it("opens the asset itself on an exact tag match", async () => {
+      await signInAs(Role.STAFF_RO);
+
+      // The barcode case. redirect() throws a NEXT_REDIRECT control error
+      // whose digest carries the target.
+      await expect(renderRegister({ q: laptopTag })).rejects.toMatchObject({
+        digest: expect.stringContaining(`/assets/${laptopId}`),
+      });
+    });
+
+    it("does not redirect on a partial tag match", async () => {
+      await signInAs(Role.STAFF_RO);
+
+      // Equality, never `contains`: a partial match that redirected would drop
+      // a reader typing a tag prefix into whichever asset sorted first, with
+      // nothing on screen to say it was not the one they meant.
+      const html = await renderRegister({
+        q: laptopTag.slice(0, -1),
+        siteId: searchSiteId,
+      });
+      expect(assetIdsIn(html)).toEqual([laptopId]);
+    });
+
+    it("authorises before it redirects", async () => {
+      // The short-circuit runs a query and can leave the page before anything
+      // else does, so it has to sit AFTER requireRole. If it did not, this
+      // would reject with a NEXT_REDIRECT digest instead — a deactivated user
+      // learning that a tag exists, and being handed the asset page.
+      const user = await signInAs(Role.ADMIN_IT);
+      await db.user.update({
+        where: { id: user.id },
+        data: { deactivatedAt: new Date() },
+      });
+
+      await expect(renderRegister({ q: laptopTag })).rejects.toThrow(
+        AuthorizationError,
+      );
+    });
+
+    it("carries the search through every link that changes the view", async () => {
+      await signInAs(Role.FINANCE);
+
+      const html = await renderRegister({ q: prefix, siteId: searchSiteId });
+
+      // Every sort header and every estate chip rebuilds the whole query
+      // string. One of them dropping `q` means sorting your four results hands
+      // you the entire register, sorted — invisible until somebody clicks a
+      // header mid-search.
+      const viewHrefs = [
+        ...new Set(
+          [...html.matchAll(/href="(\/assets\?[^"]*)"/g)].map((m) => m[1]),
+        ),
+      ];
+      expect(viewHrefs.length).toBeGreaterThan(0);
+      for (const href of viewHrefs) {
+        expect(href, `link "${href}" dropped the search`).toContain(
+          `q=${prefix}`,
+        );
+      }
+
+      // The box still shows what was searched, so the URL and the control
+      // cannot disagree after a shared link is opened.
+      expect(html).toContain(`value="${prefix}"`);
+    });
+
+    it("renders the register for a malformed search rather than a 500", async () => {
+      await signInAs(Role.STAFF_RO);
+
+      // A repeated param arrives as an array; an all-whitespace box is a blank
+      // one. Each falls back on its own, and the `siteId` beside it survives —
+      // the per-field `.catch`, not one all-or-nothing safeParse.
+      const malformed: (string | string[])[] = [["a", "b"], "   ", ""];
+      for (const q of malformed) {
+        const html = await renderRegister({ q, siteId: searchSiteId });
+        expect(assetIdsIn(html), `for q=${JSON.stringify(q)}`).toEqual(
+          [...allIds].sort(),
+        );
+      }
     });
   });
 });
