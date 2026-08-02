@@ -33,10 +33,19 @@ export default defineConfig({
       "**/.pnpm-store/**",
       "**/.stryker-tmp/**",
     ],
-    // Integration tests share one real test database, and the last-admin
-    // guard counts active admins across the whole User table — files that
-    // create ADMIN_IT rows while another file stages a "last admin" scenario
-    // would race. Run test files sequentially; the suite is small.
+    // Integration tests share one real test database, and TWO things depend on
+    // files not interleaving. Both are listed because removing this setting
+    // needs to surface both dependents, not just whichever is remembered:
+    //
+    // 1. The last-admin guard counts active admins across the whole User
+    //    table, so a file creating ADMIN_IT rows races another staging a
+    //    "last admin" scenario.
+    // 2. sign-in-policy.integration.test.ts clears the entire
+    //    VerificationToken table — the throttle's caps are global, so no
+    //    scoped `where` would do — while admin/users/page.integration.test.tsx
+    //    reads and writes those same rows (issue #11).
+    //
+    // Run test files sequentially; the suite is small.
     fileParallelism: false,
     // 5s is a unit-test default and these are not unit tests: each real-DB file
     // renders a whole page against Postgres, and the register renders EVERY

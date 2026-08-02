@@ -1,5 +1,5 @@
 import "server-only";
-import NextAuth from "next-auth";
+import NextAuth, { type NextAuthConfig } from "next-auth";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import Resend from "next-auth/providers/resend";
 import { authConfig } from "@/auth.config";
@@ -18,30 +18,54 @@ import { isSignInAllowed } from "@/lib/sign-in-policy";
  * AM-01 implements the real auth story on top of this skeleton. One rule is
  * already binding: there is NO open signup — magic links issue only for
  * provisioned users, and unknown emails get a generic failure.
+ *
+ * Still the lazy factory form NextAuth requires (CLAUDE.md) — named and
+ * exported only so a test can read the provider list without standing up an
+ * HTTP request. `NextAuth(authOptions)` passes the REFERENCE: next-auth sees
+ * `typeof config === "function"` and takes the lazy branch, so setEnvDefaults
+ * runs per request, not at module scope. `NextAuth(authOptions())` would undo
+ * that and is the bug issue #14 was about.
+ *
+ * HAZARD the export creates: a named factory looks safe to call anywhere, and
+ * a module-scope `authOptions()` in some future file would read env() at
+ * module top level — breaking the env-free build. CI catches it, but the
+ * instinct is reasonable enough to warrant saying so here. Call it inside a
+ * request, or not at all.
+ *
+ * `/admin/users` reads `User.emailVerified` as "last successful magic-link
+ * sign-in", which is only true while the magic link is the ONLY way in: the
+ * adapter writes that column from the `account.type === "email"` branch alone.
+ * `src/auth.providers.test.ts` pins the provider count to one so that adding
+ * an OAuth or WebAuthn provider fails loudly here rather than quietly turning
+ * that column into a lie (issue #11).
  */
-export const { handlers, auth, signIn, signOut } = NextAuth(() => ({
-  ...authConfig,
-  adapter: PrismaAdapter(getDb()),
-  secret: env().AUTH_SECRET,
-  providers: [
-    Resend({
-      apiKey: env().AUTH_RESEND_KEY,
-      from: env().AUTH_EMAIL_FROM,
-      // Magic-link TTL 15 minutes: delivery is seconds; the Auth.js 24h
-      // default is needless exposure (AM-01 design).
-      maxAge: 15 * 60,
-    }),
-  ],
-  callbacks: {
-    ...authConfig.callbacks,
-    // No open signup: magic links issue only for provisioned, active users,
-    // and send bursts are throttled (src/lib/sign-in-policy.ts). All
-    // rejections return false — indistinguishable AccessDenied — because the
-    // uniform /signin UX must not leak which addresses are registered.
-    async signIn({ user, email }) {
-      return isSignInAllowed(getDb(), user.email, {
-        verificationRequest: email?.verificationRequest === true,
-      });
+export function authOptions(): NextAuthConfig {
+  return {
+    ...authConfig,
+    adapter: PrismaAdapter(getDb()),
+    secret: env().AUTH_SECRET,
+    providers: [
+      Resend({
+        apiKey: env().AUTH_RESEND_KEY,
+        from: env().AUTH_EMAIL_FROM,
+        // Magic-link TTL 15 minutes: delivery is seconds; the Auth.js 24h
+        // default is needless exposure (AM-01 design).
+        maxAge: 15 * 60,
+      }),
+    ],
+    callbacks: {
+      ...authConfig.callbacks,
+      // No open signup: magic links issue only for provisioned, active users,
+      // and send bursts are throttled (src/lib/sign-in-policy.ts). All
+      // rejections return false — indistinguishable AccessDenied — because the
+      // uniform /signin UX must not leak which addresses are registered.
+      async signIn({ user, email }) {
+        return isSignInAllowed(getDb(), user.email, {
+          verificationRequest: email?.verificationRequest === true,
+        });
+      },
     },
-  },
-}));
+  };
+}
+
+export const { handlers, auth, signIn, signOut } = NextAuth(authOptions);

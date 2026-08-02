@@ -3,6 +3,7 @@
 import { useActionState, useState } from "react";
 import type { Role } from "@prisma/client";
 import { ROLE_LABELS, ROLE_ORDER } from "@/lib/labels";
+import { exactTimestamp, relativeTime } from "@/lib/relative-time";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
@@ -23,14 +24,31 @@ export type AdminUserRow = {
   employeeRef: string | null;
   role: Role;
   deactivated: boolean;
+  /**
+   * Last successful magic-link sign-in — `User.emailVerified`, whose semantic
+   * and its Resend-is-the-only-provider precondition are spelled out at the
+   * read site (page.tsx). Null is "has never signed in".
+   */
+  lastSignInAt: Date | null;
+  /**
+   * When a magic link was last ISSUED for this address, from a surviving
+   * `VerificationToken` row. Null is "no unredeemed link on record" — a
+   * statement about the past, NOT a live invitation. The rendered copy stays
+   * past-tense fact ("Link sent 5 days ago"); never "Invite pending" or
+   * "Awaiting sign-in", which would claim something this data cannot support.
+   */
+  lastLinkSentAt: Date | null;
 };
 
 export function UsersTable({
   users,
   currentAdminId,
+  now,
 }: {
   users: AdminUserRow[];
   currentAdminId: string;
+  /** Passed in so every row on the page agrees about what "now" is. */
+  now: Date;
 }) {
   return (
     <Table>
@@ -40,7 +58,15 @@ export function UsersTable({
           <TableHead>Email</TableHead>
           <TableHead>Employee ref</TableHead>
           <TableHead>Role</TableHead>
-          <TableHead>Status</TableHead>
+          <TableHead>Last signed in</TableHead>
+          {/* A "Status" header used to sit here, and the table has had six
+              headers over five cells since AM-01: "Status" was printed above
+              the activation buttons, and "Actions" above a column that was
+              never rendered at all. Adding a seventh header to a row already
+              off by one would only move the misalignment along, so "Status"
+              goes: the buttons now sit under the header that describes them,
+              and the deactivated badge stays in the Name cell where it has
+              always been rendered. */}
           <TableHead>Actions</TableHead>
         </TableRow>
       </TableHeader>
@@ -50,6 +76,7 @@ export function UsersTable({
             key={user.id}
             user={user}
             isSelf={user.id === currentAdminId}
+            now={now}
           />
         ))}
       </TableBody>
@@ -57,7 +84,76 @@ export function UsersTable({
   );
 }
 
-function UserRow({ user, isSelf }: { user: AdminUserRow; isSelf: boolean }) {
+/**
+ * "Last signed in", and — when they never have — how far the invitation got.
+ *
+ * One column, two facts (issue #11). The question an admin brings to this
+ * screen is "did the magic link work?", and "never signed in" on its own
+ * cannot answer it: a person whose link was issued but never delivered looks
+ * exactly like a person nobody has invited yet. The first is a broken
+ * `AUTH_EMAIL_FROM`; the second is a forgotten task. Splitting these across
+ * two columns would make the reader do the join.
+ *
+ * The phrase leads and the exact UTC value stays one hover away, never
+ * replaced — the same contract as the asset history.
+ */
+function SignInCell({
+  lastSignInAt,
+  lastLinkSentAt,
+  now,
+}: {
+  lastSignInAt: Date | null;
+  lastLinkSentAt: Date | null;
+  now: Date;
+}) {
+  if (lastSignInAt) {
+    return (
+      <time
+        dateTime={lastSignInAt.toISOString()}
+        title={exactTimestamp(lastSignInAt)}
+      >
+        {relativeTime(lastSignInAt, now)}
+      </time>
+    );
+  }
+
+  return (
+    <div className="flex flex-col items-start gap-0.5">
+      {/* Not a colour. The five status hues are the asset vocabulary and mean
+          nothing about a person, and this state has to survive a monochrome
+          print and colour-vision deficiency alike — so the distinction is
+          carried by the words and by the chip's own shape. */}
+      <span className="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-xs">
+        Never signed in
+      </span>
+      <span className="text-muted-foreground text-xs">
+        {lastLinkSentAt ? (
+          <>
+            Link sent{" "}
+            <time
+              dateTime={lastLinkSentAt.toISOString()}
+              title={exactTimestamp(lastLinkSentAt)}
+            >
+              {relativeTime(lastLinkSentAt, now)}
+            </time>
+          </>
+        ) : (
+          "No link sent yet"
+        )}
+      </span>
+    </div>
+  );
+}
+
+function UserRow({
+  user,
+  isSelf,
+  now,
+}: {
+  user: AdminUserRow;
+  isSelf: boolean;
+  now: Date;
+}) {
   const [roleState, roleAction, rolePending] = useActionState(changeRole, null);
   // Controlled, so the confirm dialog can submit the chosen role. Radix renders
   // dialog content in a PORTAL at the document root, outside this <tr> — so a
@@ -120,6 +216,13 @@ function UserRow({ user, isSelf }: { user: AdminUserRow; isSelf: boolean }) {
             </Button>
           )}
         </form>
+      </TableCell>
+      <TableCell className="text-sm">
+        <SignInCell
+          lastSignInAt={user.lastSignInAt}
+          lastLinkSentAt={user.lastLinkSentAt}
+          now={now}
+        />
       </TableCell>
       <TableCell>
         <div className="flex items-center gap-2">
