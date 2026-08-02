@@ -1,5 +1,5 @@
 import NextAuth from "next-auth";
-import { authConfig } from "@/auth.config";
+import { edgeAuthConfig } from "@/auth.edge";
 
 /**
  * Deny-by-default authentication gate (docs/DESIGN.md security constraint 1).
@@ -11,59 +11,15 @@ import { authConfig } from "@/auth.config";
  *
  * Uses the edge-safe config only: no Prisma import may ever reach this file.
  *
- * ── Why `secret` is passed here, and read from process.env rather than env() ──
- *
- * This file does NOT share the env() chokepoint, and cannot: src/lib/env.ts
- * imports "server-only", so importing it here would break the edge bundle.
- * Middleware is the one place in the app that reads configuration directly.
- *
- * What fixes this is the lazy factory form, and the reason is WHEN the read
- * happens. `NextAuth(config)` with an OBJECT calls `setEnvDefaults`
- * immediately, which does `config.secret ??= process.env.AUTH_SECRET` — at
- * module scope. So the secret is read once per edge isolate at module
- * evaluation, and the result, `undefined` included, is then cached on the
- * shared `authConfig` object for that isolate's whole life. With the FUNCTION
- * form the same defaulting runs per request. Production showed an
- * 18-occurrence MissingSecret group on /middleware (2026-07-28 → 07-30) under
- * the object form; src/auth.ts has always used the function form and has
- * never shown it.
- *
- * The spread matters for the same reason: it stops `setEnvDefaults` mutating
- * the `authConfig` object that src/auth.ts also imports.
- *
- * `process.env.AUTH_SECRET` is written out as a literal static member access
- * on purpose — no destructuring, no computed key, no spreading `process.env`,
- * because only statically analysable references survive into an edge bundle.
- * Verified against the build rather than assumed: `.next/server/src/
- * middleware.js` contains the string `process.env.AUTH_SECRET` and does NOT
- * contain the secret's value, so this is a live read at the edge and nothing
- * is baked into a build artefact.
- *
- * The lazy form is also what keeps this inside the env rule: the read happens
- * per request, never at module top level, so `next build` still succeeds with
- * no environment populated (CI proves this every run).
- *
- * Fails closed, loudly, and server-side only. There is no fallback and no
- * derived default — that would silently invalidate every existing session
- * instead of saying so. A throw naming the variable is diagnosable in
- * minutes; the alternative is middleware decoding no session, treating every
- * request as anonymous, and bouncing every authenticated user to /signin,
- * which is indistinguishable from broken sign-in and cost a full debugging
- * session once already (Hobby-plan runtime logs retain one hour, so it has to
- * be caught live or not at all). /signin is excluded by the matcher below, so
- * it still renders and the uniform sign-in message is untouched — this adds
- * no user-visible error surface.
+ * `edgeAuthConfig` is passed as a FUNCTION, never called here. The object form
+ * of NextAuth() runs `setEnvDefaults` at module scope, reading AUTH_SECRET
+ * once per edge isolate at module evaluation; the function form defers it to
+ * request time, which is also the only form in which the factory's throw does
+ * not fire during a zero-env build. Why the secret is handled there rather
+ * than here, and what is and is not known about the production failure it
+ * fixes, is documented in src/auth.edge.ts (issue #14).
  */
-export default NextAuth(() => {
-  const secret = process.env.AUTH_SECRET;
-  if (!secret) {
-    throw new Error(
-      "AUTH_SECRET is not set in the edge runtime. Middleware cannot verify " +
-        "sessions without it and would treat every request as anonymous.",
-    );
-  }
-  return { ...authConfig, secret };
-}).auth;
+export default NextAuth(edgeAuthConfig).auth;
 
 export const config = {
   // /signin is the ONLY public page (uniform magic-link flow, AM-01);

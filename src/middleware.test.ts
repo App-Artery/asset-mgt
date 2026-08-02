@@ -1,89 +1,112 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { authConfig } from "@/auth.config";
+import { edgeAuthConfig } from "./auth.edge";
 
 /**
- * Source-shape guards on the edge middleware (issue #14).
+ * Guards on the edge middleware's secret handling (issue #14).
  *
- * These read the file rather than the module, and that is deliberate: what
- * this defends is a property of how `NextAuth` is CALLED, which is erased once
- * the module is imported and only the returned handler is in hand. There is no
- * runtime seam here to assert against.
+ * The factory lives in src/auth.edge.ts and is exported so these can assert
+ * BEHAVIOUR. An earlier revision asserted the source text instead, and the
+ * advisor was right to reject it: a grep closes the spelling it was shown, not
+ * the class. `?? "dev-secret"` was red-proved and guarded, and
  *
- * **What these cannot prove.** That the deployed edge runtime actually
- * resolves `AUTH_SECRET`. Only a real deployment shows that, and the symptom
- * of failure — every authenticated user bounced to /signin — is
- * indistinguishable from broken sign-in, which is the whole reason #14 was
- * worth pre-empting. These guards defend the code shape that was found to fix
- * it; they are not a substitute for checking prod after deploy.
+ *     const effective = secret || "dev-secret";
  *
- * They are still worth having, because the realistic regression is somebody
- * tidying the lazy factory back into the eager `NextAuth(authConfig)` call it
- * replaced — which reads clean, typechecks, builds, and silently reintroduces
- * the outage.
+ * would have walked straight past the same guard — throw unreachable,
+ * middleware silently signing sessions with a known value. Calling the factory
+ * closes the class: whatever route the code takes, either it throws or it
+ * returns the real secret.
+ *
+ * What these still cannot prove: that the deployed edge runtime resolves
+ * AUTH_SECRET at all. Nothing in this suite exercises the edge runtime, and
+ * the symptom of failure — every authenticated user bounced to /signin — is
+ * indistinguishable from broken sign-in, which is why #14 was worth
+ * pre-empting. Only a post-promote check on production shows the happy path.
  */
-describe("middleware auth construction", () => {
-  // Comments are stripped before matching, and finding that out cost a red
-  // test: middleware.ts explains in prose why the eager `NextAuth(authConfig)`
-  // form was replaced, and the negative assertion below matched the
-  // explanation. A source guard that greps a whole file is asserting against
-  // documentation as much as code — so this reads only the code.
-  const source = readFileSync(
-    path.resolve(import.meta.dirname, "middleware.ts"),
-    "utf8",
-  )
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/\/\/.*$/gm, "");
+describe("edgeAuthConfig", () => {
+  const original = process.env.AUTH_SECRET;
+
+  afterEach(() => {
+    if (original === undefined) delete process.env.AUTH_SECRET;
+    else process.env.AUTH_SECRET = original;
+  });
+
+  it("throws, naming the variable, when AUTH_SECRET is absent", () => {
+    delete process.env.AUTH_SECRET;
+    expect(() => edgeAuthConfig()).toThrow(/AUTH_SECRET is not set/);
+  });
+
+  it("passes the secret through when it is present", () => {
+    process.env.AUTH_SECRET = "test-secret-value";
+    expect(edgeAuthConfig().secret).toBe("test-secret-value");
+  });
+
+  it("never yields a truthy secret when the variable is absent", () => {
+    // The class-closing assertion. Any fallback — ??, ||, an intermediate
+    // variable, a second return branch — makes this produce a truthy secret
+    // without throwing, and fails here regardless of how it is spelled.
+    delete process.env.AUTH_SECRET;
+
+    let yielded: unknown;
+    try {
+      yielded = edgeAuthConfig().secret;
+    } catch {
+      yielded = undefined;
+    }
+    expect(yielded).toBeFalsy();
+  });
+
+  it("does not mutate the shared authConfig", () => {
+    // authConfig is imported by src/auth.ts too. The spread in the factory is
+    // what stops next-auth's setEnvDefaults writing a secret onto it.
+    process.env.AUTH_SECRET = "test-secret-value";
+    edgeAuthConfig();
+    expect(authConfig).not.toHaveProperty("secret");
+  });
+});
+
+/**
+ * One source-shape guard survives, because it defends something with no
+ * runtime seam: only statically analysable `process.env.X` references survive
+ * into an edge bundle, and a destructured or computed read would still return
+ * the right value under vitest while resolving to undefined at the edge. That
+ * is precisely the failure this issue exists to prevent, and it is invisible
+ * to a behavioural test running in Node.
+ */
+describe("edge source shape", () => {
+  // Comments stripped before matching, and finding that out cost a red test:
+  // the docblocks explain why the eager `NextAuth(authConfig)` form was
+  // replaced, and the negative assertion below matched the explanation.
+  const codeOf = (file: string) =>
+    readFileSync(path.resolve(import.meta.dirname, file), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/.*$/gm, "");
 
   it("reads AUTH_SECRET as a literal static member access", () => {
-    // Only statically analysable references survive into an edge bundle, so
-    // the spelling is load-bearing: no destructuring, no computed key, no
-    // spreading process.env.
+    const source = codeOf("auth.edge.ts");
     expect(source).toMatch(/process\.env\.AUTH_SECRET/);
-    expect(source).not.toMatch(/\{\s*AUTH_SECRET\s*\}\s*=\s*process\.env/);
+    expect(source).not.toMatch(/\{[^}]*AUTH_SECRET[^}]*\}\s*=\s*process\.env/);
     expect(source).not.toMatch(/process\.env\[/);
   });
 
-  it("passes the secret into the config", () => {
-    // Auth.js infers AUTH_SECRET on its own, so the absence of this is
-    // invisible until the inference fails in the edge runtime.
-    expect(source).toMatch(/\.\.\.authConfig,\s*secret\b/);
-  });
-
-  it("constructs NextAuth with the lazy factory form", () => {
-    // The object form calls setEnvDefaults immediately, which does
-    // `config.secret ??= process.env.AUTH_SECRET` at module scope — reading
-    // once per edge isolate at module evaluation and caching the result,
-    // undefined included, on the shared authConfig object. The function form
-    // defers it to request time. This is the actual fix for #14, and the thing
-    // most likely to be "simplified" away.
-    expect(source).toMatch(/NextAuth\(\s*\(\s*\)\s*=>/);
+  it("passes the factory to NextAuth without calling it", () => {
+    // `NextAuth(edgeAuthConfig())` would typecheck and pass every behavioural
+    // test in this file while moving the read back to module scope — the exact
+    // bug #14 is about. Only the source shows the difference.
+    const source = codeOf("middleware.ts");
+    expect(source).toMatch(/NextAuth\(\s*edgeAuthConfig\s*\)/);
+    expect(source).not.toMatch(/NextAuth\(\s*edgeAuthConfig\(\)\s*\)/);
     expect(source).not.toMatch(/NextAuth\(\s*authConfig\s*\)/);
   });
 
-  it("fails closed when the secret is absent", () => {
-    // No fallback and no derived default, ever: a derived secret would
-    // silently invalidate every existing session rather than say so. The
-    // throw is server-side only — /signin is excluded by the matcher, so the
-    // uniform sign-in message is untouched.
-    expect(source).toMatch(/if\s*\(\s*!secret\s*\)/);
-    expect(source).toMatch(/throw new Error\(/);
-    expect(source).toMatch(/AUTH_SECRET is not set/);
-  });
-
-  it("has no fallback secret", () => {
-    // Added because red-proving found the gap: with only the throw asserted
-    // above, `process.env.AUTH_SECRET ?? "dev-secret"` passed every test in
-    // this file. The throw becomes unreachable and middleware silently signs
-    // sessions with a known value — the worst outcome of the three, and the
-    // one the guards were least equipped to see.
-    expect(source).not.toMatch(/process\.env\.AUTH_SECRET\s*(\?\?|\|\|)/);
-  });
-
-  it("does not import the env() chokepoint", () => {
-    // src/lib/env.ts imports "server-only". Pulling it in here would break the
-    // edge bundle — middleware is the one file where going through env() is
-    // the wrong answer (CLAUDE.md §Env chokepoint).
+  it("keeps the edge config free of server-only modules", () => {
+    // src/lib/env.ts imports "server-only" and zod-parses the whole of
+    // process.env. Importing it here would break the edge bundle.
+    const source = codeOf("auth.edge.ts");
     expect(source).not.toMatch(/from\s+["']@\/lib\/env["']/);
+    expect(source).not.toMatch(/["']server-only["']/);
   });
 });
