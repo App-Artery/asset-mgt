@@ -247,9 +247,9 @@ mockups.** So fidelity is a verification step, not a hope.
   behaviour rather than markup — that is the signal this pass changed
   presentation and nothing else. `page.integration.test.tsx` and
   `me/assignments/page.integration.test.tsx` are the two that matter.
-- **New tests:** the set-equality vocabulary tests (§4.1), the four confirmation
-  guards (§5), and a register test that sort and status params round-trip
-  through the boundary schema.
+- **New tests:** the set-equality vocabulary tests (§4.1), the confirmation
+  guards (§5 — four at this story, five since #19), and a register test that
+  sort and status params round-trip through the boundary schema.
 - **Unchanged and asserted:** the `STAFF_RO` register renders no holder column
   and no `/people/` link.
 - Full suite plus env-free build in CI.
@@ -274,6 +274,24 @@ Since #10 the guards live in `test/action-dialog-guards.tsx` and are run over
 both `ConfirmActionDialog` and `FormDialog`, so a regression in either fails the
 same assertion. A copy per component would be two descriptions of one property,
 free to drift — and silently, since both files would stay green.
+
+**Guard 5, added in #19 review.** A reopened dialog is a fresh dialog. Both
+components called `useActionState` at their top level, and neither unmounts when
+it closes — the trigger stays on the page — so the hook still held the previous
+run's result on the next open: `succeeded` true, fields gone, nothing offered but
+the Done button. The action was unreachable until the page remounted. `Add user…`
+on the Users page was the live case; adding two users in a row hit it. The three
+`ConfirmActionDialog` call sites happened to hide their own trigger on success
+and so never showed it, which is a property of those call sites and not of the
+component — both are fixed, since the guard is shared.
+
+The reset is a keyed inner component per open (`FormDialogRun`,
+`ConfirmActionDialogRun`); `open` stays in the outer, which does not remount. The
+key is bumped on the way **in**. Bumping it on close — the more obvious reading —
+resets the same state but unmounts the subtree while Radix still needs it,
+cutting the close animation and returning focus to a destroyed node. That is why
+guard 5 also asserts focus return to the trigger: it is what discriminates the
+two shapes, and it was red-proved against the close-bumping version.
 
 ## 8. What shipped
 

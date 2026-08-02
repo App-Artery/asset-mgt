@@ -54,16 +54,7 @@ import {
 /** The shape `AssetActionState` and `UserActionState` already have. */
 export type FormDialogState = { ok: boolean; message: string } | null;
 
-export function FormDialog({
-  trigger,
-  title,
-  description,
-  submitLabel,
-  pendingLabel,
-  action,
-  hiddenFields,
-  children,
-}: {
+type FormDialogProps = {
   /** The button that opens the dialog. Opens it; submits nothing. */
   trigger: ReactNode;
   title: string;
@@ -79,8 +70,66 @@ export function FormDialog({
   hiddenFields: Record<string, string>;
   /** The fields. Frozen while the action is in flight; gone once it succeeds. */
   children?: ReactNode;
-}) {
+};
+
+/**
+ * Owns nothing but "is it open" and "which run is this" (§5 guard 5).
+ *
+ * `useActionState` has no reset, and its value lives exactly as long as the
+ * component that called it. Neither dialog unmounts when it closes — the
+ * trigger stays on the page — so on the second open the hook still holds the
+ * FIRST run's result: `succeeded` is true, the fieldset is gone, and the only
+ * control left is the Done button that closes it again. The action becomes
+ * unreachable until something remounts the whole page. The Users page
+ * "Add user…" button is the live case, since it is on screen permanently and
+ * adding a second user is the ordinary thing to do next.
+ *
+ * A fresh instance IS the reset, so the run below is keyed and the key is
+ * bumped on the way IN. Bumping it on the way out — the more obvious reading
+ * of "reset when the dialog closes" — resets the same state, but unmounts the
+ * subtree at exactly the moment Radix needs it alive: the close animation is
+ * cut, and focus return to the trigger targets a node that has already been
+ * destroyed, dropping a keyboard operator at <body>. Resetting on open buys
+ * the same freshness while the close path stays entirely Radix's.
+ *
+ * `open` stays HERE rather than inside the run, because the run is what
+ * remounts: state that has to survive the reset cannot live in the thing being
+ * reset.
+ */
+export function FormDialog(props: FormDialogProps) {
   const [open, setOpen] = useState(false);
+  const [generation, setGeneration] = useState(0);
+
+  return (
+    <FormDialogRun
+      key={generation}
+      {...props}
+      open={open}
+      onOpenChange={(next) => {
+        if (next) setGeneration((current) => current + 1);
+        setOpen(next);
+      }}
+    />
+  );
+}
+
+/** One run of the action: mounted fresh per open, discarded on the next one. */
+function FormDialogRun({
+  trigger,
+  title,
+  description,
+  submitLabel,
+  pendingLabel,
+  action,
+  hiddenFields,
+  children,
+  open,
+  onOpenChange,
+}: FormDialogProps & {
+  open: boolean;
+  /** Asks the owner to open or close. Refused here while the action runs. */
+  onOpenChange: (next: boolean) => void;
+}) {
   const [state, formAction, pending] = useActionState<
     FormDialogState,
     FormData
@@ -97,7 +146,7 @@ export function FormDialog({
         // Escape, the overlay and the X through here, so refusing here covers
         // all three at once.
         if (pending) return;
-        setOpen(next);
+        onOpenChange(next);
       }}
     >
       <DialogTrigger asChild>{trigger}</DialogTrigger>
@@ -158,7 +207,7 @@ export function FormDialog({
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => setOpen(false)}
+                onClick={() => onOpenChange(false)}
               >
                 Done
               </Button>
@@ -171,7 +220,7 @@ export function FormDialog({
                   type="button"
                   variant="outline"
                   disabled={pending}
-                  onClick={() => setOpen(false)}
+                  onClick={() => onOpenChange(false)}
                 >
                   Cancel
                 </Button>

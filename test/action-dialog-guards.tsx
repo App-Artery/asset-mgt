@@ -234,4 +234,55 @@ export function describeActionDialogGuards(
       );
     });
   });
+
+  describe(`${name} — guard 5: a reopened dialog is a fresh dialog`, () => {
+    it("does not carry the previous result into the next open", async () => {
+      const action = settledAction({ ok: true, message: SUCCESS_MESSAGE });
+      const { user } = setup(action);
+
+      await open(user);
+      await user.click(await screen.findByRole("button", { name: submit }));
+      await act(async () => {});
+      expect(screen.getByRole("status")).toHaveTextContent(SUCCESS_MESSAGE);
+
+      await user.click(screen.getByRole("button", { name: "Done" }));
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+      );
+
+      await open(user);
+      await screen.findByRole("dialog");
+
+      // `useActionState` keeps its value for the life of the component, and
+      // neither dialog unmounts on close — so without a reset the SECOND open
+      // is still showing the FIRST open's outcome: success message, no
+      // controls, nothing to do but press Done again. The action becomes
+      // unreachable until the whole page remounts.
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: submit })).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Done" }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("returns focus to the trigger on close", async () => {
+      // Not incidental coverage: the reset above is a remount, and focus
+      // RETURN is the Radix guarantee a remount is most likely to cut (see
+      // the `ui/dialog.tsx` docblock). Losing it drops the keyboard operator
+      // at <body> with no way back to the control they just used, and no
+      // guard above would notice.
+      const action = settledAction({ ok: true, message: SUCCESS_MESSAGE });
+      const { user } = setup(action);
+
+      await open(user);
+      await screen.findByRole("dialog");
+
+      await user.keyboard("{Escape}");
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+      );
+
+      expect(screen.getByRole("button", { name: trigger })).toHaveFocus();
+    });
+  });
 }

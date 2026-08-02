@@ -99,4 +99,36 @@ describe("FormDialog — the fields are the point", () => {
 
     await act(async () => release({ ok: true, message: "Received." }));
   });
+
+  it("gives the next open an empty form, not the last one's", async () => {
+    // Guard 5 in the shared helper asserts the property both dialogs share:
+    // the previous result is gone. This is the half only a FORM has — the
+    // fields are back, and back at their defaults rather than still holding
+    // what was typed into the run that already succeeded. Re-submitting a
+    // prefilled tag is how an operator tags the wrong asset.
+    const action = vi.fn(async (): Promise<FormDialogState> => ({
+      ok: true,
+      message: "Received and tagged.",
+    }));
+    render(dialog(action));
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Receive and tag…" }));
+    const tag = await screen.findByLabelText("Asset tag");
+    await user.clear(tag);
+    await user.type(tag, "LT-0042");
+    await user.click(screen.getByRole("button", { name: "Receive and tag" }));
+
+    // See the shared helper on why this is an act flush and not a polling query.
+    await act(async () => {});
+    expect(screen.queryByLabelText("Asset tag")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await user.click(screen.getByRole("button", { name: "Receive and tag…" }));
+
+    const reopened = await screen.findByLabelText("Asset tag");
+    expect(reopened).toBeInTheDocument();
+    expect(reopened).toHaveValue("LT-0001");
+    expect(reopened).toBeEnabled();
+  });
 });

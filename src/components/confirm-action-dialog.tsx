@@ -52,17 +52,7 @@ import {
  */
 export type ConfirmActionState = { ok: boolean; message: string } | null;
 
-export function ConfirmActionDialog({
-  trigger,
-  title,
-  description,
-  confirmLabel,
-  pendingLabel,
-  destructive = false,
-  action,
-  hiddenFields,
-  children,
-}: {
+type ConfirmActionDialogProps = {
   /** The button that opens the dialog. Opens it; submits nothing. */
   trigger: ReactNode;
   title: string;
@@ -79,8 +69,59 @@ export function ConfirmActionDialog({
   hiddenFields: Record<string, string>;
   /** Extra fields — a reason, a condition note. Rendered above the buttons. */
   children?: ReactNode;
-}) {
+};
+
+/**
+ * Owns nothing but "is it open" and "which run is this" (§5 guard 5) — the
+ * same split as `FormDialog`, for the same reason and with the same shape;
+ * that component's docblock is the long version.
+ *
+ * `useActionState` outlives a close, so without a fresh instance per open the
+ * second open still shows the first run's result and offers no way to run the
+ * action again. Every call site today happens to hide its own trigger once the
+ * action succeeds — a deactivated user renders the Reactivate control instead,
+ * a retired asset stops offering Retire — so the stale state is currently
+ * unreachable here and reachable in `FormDialog`. That is a property of those
+ * three call sites, not of this component, and it is not one a future caller
+ * would think to check. The guard is shared, so the fix is too.
+ */
+export function ConfirmActionDialog(props: ConfirmActionDialogProps) {
   const [open, setOpen] = useState(false);
+  const [generation, setGeneration] = useState(0);
+
+  return (
+    <ConfirmActionDialogRun
+      key={generation}
+      {...props}
+      open={open}
+      // On the way IN, never on the way out: unmounting on close would cut the
+      // close animation and hand Radix a destroyed node to return focus to.
+      onOpenChange={(next) => {
+        if (next) setGeneration((current) => current + 1);
+        setOpen(next);
+      }}
+    />
+  );
+}
+
+/** One run of the action: mounted fresh per open, discarded on the next one. */
+function ConfirmActionDialogRun({
+  trigger,
+  title,
+  description,
+  confirmLabel,
+  pendingLabel,
+  destructive = false,
+  action,
+  hiddenFields,
+  children,
+  open,
+  onOpenChange,
+}: ConfirmActionDialogProps & {
+  open: boolean;
+  /** Asks the owner to open or close. Refused here while the action runs. */
+  onOpenChange: (next: boolean) => void;
+}) {
   const [state, formAction, pending] = useActionState<
     ConfirmActionState,
     FormData
@@ -97,7 +138,7 @@ export function ConfirmActionDialog({
         // Escape, the overlay and the X through here, so refusing here covers
         // all three at once.
         if (pending) return;
-        setOpen(next);
+        onOpenChange(next);
       }}
     >
       <DialogTrigger asChild>{trigger}</DialogTrigger>
@@ -145,7 +186,7 @@ export function ConfirmActionDialog({
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => setOpen(false)}
+                onClick={() => onOpenChange(false)}
               >
                 Done
               </Button>
@@ -158,7 +199,7 @@ export function ConfirmActionDialog({
                   type="button"
                   variant="outline"
                   disabled={pending}
-                  onClick={() => setOpen(false)}
+                  onClick={() => onOpenChange(false)}
                 >
                   Cancel
                 </Button>
