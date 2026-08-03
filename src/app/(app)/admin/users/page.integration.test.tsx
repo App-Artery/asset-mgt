@@ -279,4 +279,24 @@ describe.skipIf(!testDatabaseUrl)("admin users page — last signed in", () => {
     );
     await adapter.updateUser?.({ id, emailVerified });
   }
+
+  it("renders both shapes of the roster", async () => {
+    const email = await provision("both-shapes");
+    const html = await renderAsAdmin();
+
+    expect(html).toContain('data-testid="users-table"');
+    expect(html).toContain('data-testid="users-cards"');
+    // Each user reaches both shapes. The email is the row's identity here.
+    expect(html.split(email).length - 1).toBeGreaterThanOrEqual(2);
+  });
+
+  it("offers the role control in both shapes, so a phone can change a role", async () => {
+    const email = await provision("role-control");
+    const html = await renderAsAdmin();
+
+    // The card is not a read-only summary — provisioning away from a desk is
+    // the whole reason it exists. The aria-label is per-user and per-shape, so
+    // counting it proves the control reached both.
+    expect(html.split(`Role for ${email}`).length - 1).toBe(2);
+  });
 });
