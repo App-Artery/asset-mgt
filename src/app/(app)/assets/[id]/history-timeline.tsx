@@ -2,7 +2,7 @@ import type { AssetEventType, AssetStatus } from "@prisma/client";
 
 import { STATUS_LABELS } from "@/lib/asset-lifecycle";
 import { EVENT_TYPE_LABELS } from "@/lib/labels";
-import { exactTimestamp, relativeTime } from "@/lib/relative-time";
+import { Timestamp } from "@/components/timestamp";
 import { cn } from "@/lib/utils";
 
 /**
@@ -96,13 +96,9 @@ export function HistoryTimeline({
               ) : null}
               <div className="text-muted-foreground text-xs">
                 {/* The phrase leads, the exact value is one hover away and is
-                    never replaced — the auditor still gets UTC to the minute. */}
-                <time
-                  dateTime={entry.at.toISOString()}
-                  title={exactTimestamp(entry.at)}
-                >
-                  {relativeTime(entry.at, now)}
-                </time>
+                    never replaced — the auditor still gets UTC to the minute.
+                    That IS <Timestamp>'s default variant. */}
+                <Timestamp value={entry.at} now={now} />
                 {" · "}
                 {/* Its own element, not a bare text node: the privacy tests
                     assert on `>IT<` — the neutral label a viewer sees when the

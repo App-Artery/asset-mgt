@@ -1,9 +1,14 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { STATUS_LABELS } from "@/lib/asset-lifecycle";
 import { requireRole } from "@/lib/authz";
+import { exactTimestamp } from "@/lib/relative-time";
+import { AssetTagLink } from "@/components/asset-tag-link";
+import { AssignmentCardList } from "@/components/assignment-card-list";
+import { SectionHeading } from "@/components/section-heading";
+import { Timestamp } from "@/components/timestamp";
+import { StatusChip } from "@/components/ui/status-chip";
 import {
-  Table,
+  ResponsiveTable,
+  SCROLL_PANE,
   TableBody,
   TableCell,
   TableHead,
@@ -25,11 +30,6 @@ import { fetchPersonView, type PersonAssignmentRow } from "./person-view";
  * render what was fetched, and for a PROCUREMENT or FINANCE viewer the email
  * never left the database.
  */
-
-/** Deterministic and timezone-explicit — the server's locale is not the reader's. */
-function formatTimestamp(value: Date): string {
-  return `${value.toISOString().slice(0, 16).replace("T", " ")} UTC`;
-}
 
 export default async function PersonPage({
   params,
@@ -66,20 +66,43 @@ export default async function PersonPage({
         // state would be a security regression). This marker is what makes that
         // situation visible instead of invisible.
         <p className="border-destructive/50 text-destructive rounded-md border px-3 py-2 text-sm">
+          {/* `exactTimestamp` directly, NOT <Timestamp>. This is prose, and a
+              <time> mid-sentence buys a machine-readable attribute nothing
+              consumes while splitting the sentence into three text nodes. The
+              shared formatter is still the one being called, so the
+              de-duplication holds; what does not belong here is the element
+              wrapper.
+
+              An existing test asserts the phrase and the value are adjacent,
+              and it stays green because of this — but that is a consequence,
+              not the reason. A test is not grounds to shape markup; it could
+              have moved to a textContent comparison had the element been worth
+              having. It is not. */}
           This person&apos;s account was deactivated on{" "}
-          {formatTimestamp(deactivatedAt)}. Anything still listed under
+          {exactTimestamp(deactivatedAt)}. Anything still listed under
           &ldquo;currently held&rdquo; has not been returned.
         </p>
       ) : null}
 
       <section className="flex flex-col gap-4">
-        <h2 className="text-lg font-medium">Currently held</h2>
+        <SectionHeading>Currently held</SectionHeading>
         {open.length === 0 ? (
           <p className="text-muted-foreground text-sm">
             This person is not holding any assets.
           </p>
         ) : (
-          <Table>
+          // No `sticky`: what one person holds right now is a short list.
+          <ResponsiveTable
+            tableTestId="held-table"
+            cardsTestId="held-cards"
+            cards={
+              <AssignmentCardList
+                subject="asset"
+                rows={open}
+                label="Assets this person is holding"
+              />
+            }
+          >
             <TableHeader>
               <TableRow>
                 <TableHead>Tag</TableHead>
@@ -93,17 +116,17 @@ export default async function PersonPage({
                 <TableRow key={assignment.id}>
                   <AssetCells assignment={assignment} />
                   <TableCell>
-                    {formatTimestamp(assignment.checkedOutAt)}
+                    <Timestamp value={assignment.checkedOutAt} exact />
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
-          </Table>
+          </ResponsiveTable>
         )}
       </section>
 
       <section className="flex flex-col gap-4">
-        <h2 className="text-lg font-medium">Previously held</h2>
+        <SectionHeading>Previously held</SectionHeading>
         {past.length === 0 ? (
           <p className="text-muted-foreground text-sm">
             Nothing has been returned by this person yet.
@@ -114,7 +137,23 @@ export default async function PersonPage({
               Status is the asset&apos;s status now, not its status at the time
               it was returned.
             </p>
-            <Table>
+            {/* Unbounded and sitting below other content, so it gets a scroll
+                pane and a sticky header — the two are coupled, since a wrapper
+                with no bounded height never scrolls for a header to stick
+                within. */}
+            <ResponsiveTable
+              tableTestId="past-table"
+              cardsTestId="past-cards"
+              cards={
+                <AssignmentCardList
+                  subject="asset"
+                  rows={past}
+                  label="Assets this person has returned"
+                />
+              }
+              sticky
+              containerClassName={SCROLL_PANE}
+            >
               <TableHeader>
                 <TableRow>
                   <TableHead>Tag</TableHead>
@@ -130,12 +169,15 @@ export default async function PersonPage({
                   <TableRow key={assignment.id}>
                     <AssetCells assignment={assignment} />
                     <TableCell>
-                      {formatTimestamp(assignment.checkedOutAt)}
+                      <Timestamp value={assignment.checkedOutAt} exact />
                     </TableCell>
                     <TableCell>
-                      {assignment.returnedAt
-                        ? formatTimestamp(assignment.returnedAt)
-                        : "—"}
+                      {/* No `: "—"` fallback — this table's `where` is
+                          `returnedAt: { not: null }`, so the null branch was
+                          unreachable. */}
+                      {assignment.returnedAt ? (
+                        <Timestamp value={assignment.returnedAt} exact />
+                      ) : null}
                     </TableCell>
                     <TableCell className="whitespace-normal">
                       {assignment.conditionNotes ?? "—"}
@@ -143,7 +185,7 @@ export default async function PersonPage({
                   </TableRow>
                 ))}
               </TableBody>
-            </Table>
+            </ResponsiveTable>
           </>
         )}
       </section>
@@ -156,26 +198,29 @@ function AssetCells({ assignment }: { assignment: PersonAssignmentRow }) {
   return (
     <>
       <TableCell>
-        <Link
-          href={`/assets/${assignment.asset.id}`}
-          className="underline underline-offset-4"
-        >
-          {assignment.asset.tag ?? "Untagged"}
-        </Link>
+        <AssetTagLink id={assignment.asset.id} tag={assignment.asset.tag} />
       </TableCell>
       <TableCell>
         {assignment.asset.make} {assignment.asset.model}
       </TableCell>
-      <TableCell>{STATUS_LABELS[assignment.asset.status]}</TableCell>
+      <TableCell>
+        <StatusChip status={assignment.asset.status} />
+      </TableCell>
     </>
   );
 }
 
 function Field({ label, value }: { label: string; value: string | null }) {
   return (
-    <div>
+    // `min-w-0` because a grid item defaults to `min-width: auto` and so
+    // refuses to shrink below its content, and `break-all` because an email is
+    // one unbreakable token. Without the pair, a long address pushed this grid
+    // 21px past its column and gave the whole page a sideways scroll on a
+    // phone — measured at 390px, where nothing was POSITIONED off-screen and
+    // only the document's scrollWidth gave it away.
+    <div className="min-w-0">
       <dt className="text-muted-foreground text-xs">{label}</dt>
-      <dd>{value ? value : "—"}</dd>
+      <dd className="break-all">{value ? value : "—"}</dd>
     </div>
   );
 }

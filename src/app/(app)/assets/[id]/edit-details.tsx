@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
+import { SectionHeading } from "@/components/section-heading";
 
 /**
  * Editing as a mode, not the page's resting state (AM-09 DESIGN §4.3).
@@ -28,21 +29,21 @@ export function EditDetails({
 
   return (
     <section className="flex flex-col gap-3">
-      <div className="flex items-baseline gap-2">
-        <h2 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
-          Details
-        </h2>
-        <span className="flex-1" />
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={() => setEditing((open) => !open)}
-          aria-expanded={editing}
-        >
-          {editing ? "Cancel" : "Edit details"}
-        </Button>
-      </div>
+      <SectionHeading
+        action={
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => setEditing((open) => !open)}
+            aria-expanded={editing}
+          >
+            {editing ? "Cancel" : "Edit details"}
+          </Button>
+        }
+      >
+        Details
+      </SectionHeading>
 
       {editing ? (
         <>

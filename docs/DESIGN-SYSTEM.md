@@ -166,6 +166,28 @@ On a card, the **tag is the headline** — looking up a tag is the whole reason
 someone opens this away from a desk — with the status chip on the right, then
 make/model, then holder and site as secondary metadata.
 
+**As of 2026-08-03 this covers every table in the app**, not just the register:
+`/admin/users`, `/me/assignments`, `/people/[id]` and `/assets/[id]`'s
+every-holder table all render a `<table>` at `md:` and a card stack below.
+
+The rule is enforced by construction rather than by review. `ResponsiveTable`
+(`src/components/ui/table.tsx`) owns the breakpoint pair — `hidden md:block` and
+`md:hidden` are written once, there — and takes a **required** `cards` prop, so
+a table added later with no phone shape does not typecheck. Card bodies are
+built from the `DataCard*` primitives in `src/components/ui/data-card.tsx`; the
+three assignment tables share one `AssignmentCardList`.
+
+`sticky` and `containerClassName` are coupled: the table wrapper is
+`overflow-x-auto`, which CSS computes to `auto` on both axes, so a sticky header
+anchors to that wrapper and a wrapper with no bounded height never scrolls for
+it to stick within. Pass `SCROLL_PANE` unless the caller has a tuned value (the
+register does). Tables bounded by headcount or by one person's kit get neither.
+
+Both shapes render from one query and one mapped array. The guard is a parity
+assertion per page — the identifying field appears exactly twice in the markup —
+which is what catches a conditional applied to the table and missed on the
+cards. A test that merely asserted "a card list exists" would not.
+
 **Navigation below `md:` is a bottom tab bar**, not a hamburger drawer. Four
 destinations fit, and they stay in thumb reach; a drawer buries all four behind
 a tap in the hardest corner of the screen to reach one-handed.

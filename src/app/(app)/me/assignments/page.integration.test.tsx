@@ -191,4 +191,30 @@ describe.skipIf(!testDatabaseUrl)("my assignments (real DB)", () => {
       expect(html).not.toContain(holder.tag);
     }
   });
+
+  it("renders both shapes, so the same assignment reaches a phone and a desktop", async () => {
+    const html = await renderAs(holders[0].userId);
+
+    expect(html).toContain('data-testid="held-table"');
+    expect(html).toContain('data-testid="held-cards"');
+    expect(html).toContain('data-testid="past-table"');
+    expect(html).toContain('data-testid="past-cards"');
+
+    // The parity assertion, and the reason this test is worth writing: each tag
+    // appears exactly twice — once per shape — from a single query. A card list
+    // that dropped a row, or a conditional applied to the table and missed on
+    // the cards, changes this number. Asserting only that a card list EXISTS
+    // would not.
+    expect(html.split(holders[0].tag).length - 1).toBe(2);
+    expect(html.split(returnedTag).length - 1).toBe(2);
+  });
+
+  it("states the asset's status as a chip in both shapes", async () => {
+    const html = await renderAs(holders[0].userId);
+
+    // Was plain STATUS_LABELS text here while the register and the detail page
+    // used a chip — the same fact in two vocabularies. Two rows (one held, one
+    // returned) across two shapes is four chips.
+    expect(html.split('data-testid="status-chip"').length - 1).toBe(4);
+  });
 });

@@ -112,11 +112,18 @@ describe.skipIf(!testDatabaseUrl)("admin users page — last signed in", () => {
   }
 
   /**
-   * The row, not the page. Asserting against the whole document would let
+   * The TABLE row, not the page. Asserting against the whole document would let
    * another fixture's cell satisfy an assertion about this one — the table is
    * thousands of rows deep locally and one row deep in CI, which is exactly
    * the asymmetry that lets a broken guard stay green on the machine that runs
    * it most.
+   *
+   * Since the roster gained a phone shape this reaches the table and ONLY the
+   * table: `ResponsiveTable` renders the table wrapper first, so the first
+   * occurrence of an email is always the table's Email cell, and `</tr>` closes
+   * that row. Every sign-in test below therefore scopes to the table — which is
+   * why `cardFor` exists, so the card's copy of SignInCell is not left with no
+   * guard at all.
    */
   function rowFor(html: string, email: string): string {
     const start = html.indexOf(email);
@@ -124,6 +131,23 @@ describe.skipIf(!testDatabaseUrl)("admin users page — last signed in", () => {
     const end = html.indexOf("</tr>", start);
     expect(end).toBeGreaterThan(start);
     return html.slice(start, end);
+  }
+
+  /**
+   * The phone card for one user.
+   *
+   * The cards wrapper is rendered after the table and `UsersTable` is the last
+   * element on the page, so slicing from the testid to the end of the document
+   * is the whole card list; from there the same first-occurrence trick scopes
+   * to one card.
+   */
+  function cardFor(html: string, email: string): string {
+    const cardsAt = html.indexOf('data-testid="users-cards"');
+    expect(cardsAt, "no card list rendered").toBeGreaterThanOrEqual(0);
+    const cards = html.slice(cardsAt);
+    const start = cards.indexOf(email);
+    expect(start, `no card rendered for ${email}`).toBeGreaterThanOrEqual(0);
+    return cards.slice(start);
   }
 
   it("surfaces an adapter-written emailVerified as the last sign-in", async () => {
@@ -279,4 +303,46 @@ describe.skipIf(!testDatabaseUrl)("admin users page — last signed in", () => {
     );
     await adapter.updateUser?.({ id, emailVerified });
   }
+
+  it("renders both shapes of the roster", async () => {
+    const email = await provision("both-shapes");
+    const html = await renderAsAdmin();
+
+    expect(html).toContain('data-testid="users-table"');
+    expect(html).toContain('data-testid="users-cards"');
+
+    // FOUR, not "at least two". The table alone supplies two occurrences (the
+    // Email cell and the role select's aria-label), so a `>= 2` assertion is
+    // green with the card list deleted entirely — and `ResponsiveTable` renders
+    // the cards wrapper unconditionally, so the testid above is green with an
+    // EMPTY card list too. Exactly four is the number that goes red if either
+    // shape stops rendering this user.
+    expect(html.split(email).length - 1).toBe(4);
+  });
+
+  it("gives the phone card its own sign-in state, not just the table", async () => {
+    // rowFor scopes every sign-in test above to the table, so without this the
+    // card's SignInCell could be deleted — or wired to the wrong field — and
+    // the whole suite would stay green.
+    const invited = await provision("card-invited");
+    await issueLink(invited, new Date(Date.now() - 5 * 24 * 60 * 60 * 1000));
+    const never = await provision("card-uninvited");
+
+    const html = await renderAsAdmin();
+
+    expect(cardFor(html, invited)).toContain("Never signed in");
+    expect(cardFor(html, invited)).toContain("Link sent");
+    expect(cardFor(html, never)).toContain("Never signed in");
+    expect(cardFor(html, never)).toContain("No link sent yet");
+  });
+
+  it("offers the role control in both shapes, so a phone can change a role", async () => {
+    const email = await provision("role-control");
+    const html = await renderAsAdmin();
+
+    // The card is not a read-only summary — provisioning away from a desk is
+    // the whole reason it exists. The aria-label is per-user and per-shape, so
+    // counting it proves the control reached both.
+    expect(html.split(`Role for ${email}`).length - 1).toBe(2);
+  });
 });

@@ -352,4 +352,32 @@ describe.skipIf(!testDatabaseUrl)("asset assignment UI (real DB)", () => {
       expect(html).not.toContain(">Assign…<");
     });
   });
+
+  describe("every holder, at both widths", () => {
+    it("renders both shapes for a viewer allowed to see holders", async () => {
+      await signInAs(Role.ADMIN_IT);
+      const { html } = await renderDetail(assignedAssetId);
+
+      expect(html).toContain('data-testid="holders-table"');
+      expect(html).toContain('data-testid="holders-cards"');
+      // The holder reaches both shapes from the one assignments query. The
+      // name also appears in the custody card above, so this is a floor
+      // rather than an equality — what it catches is a card list that
+      // rendered nothing.
+      expect(html.split(personName).length - 1).toBeGreaterThanOrEqual(3);
+    });
+
+    it("renders NEITHER shape for STAFF_RO", async () => {
+      await signInAs(Role.STAFF_RO);
+      const { html } = await renderDetail(assignedAssetId);
+
+      // The whole section sits inside `canSeeHolders` and the assignments were
+      // never fetched, so the card list cannot leak what the table does not
+      // show. Asserting both testids is what stops a later refactor from
+      // hoisting the cards out of that branch.
+      expect(html).not.toContain('data-testid="holders-table"');
+      expect(html).not.toContain('data-testid="holders-cards"');
+      expect(html).not.toContain(personName);
+    });
+  });
 });
