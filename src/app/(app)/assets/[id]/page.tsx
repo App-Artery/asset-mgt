@@ -13,7 +13,8 @@ import { CONDITION_LABELS } from "@/lib/labels";
 import { getDb } from "@/lib/db";
 import { canViewAssignments, personSelectFor } from "@/lib/person-visibility";
 import {
-  Table,
+  ResponsiveTable,
+  SCROLL_PANE,
   TableBody,
   TableCell,
   TableHead,
@@ -21,6 +22,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { relativeTime } from "@/lib/relative-time";
+import { AssignmentCardList } from "@/components/assignment-card-list";
+import { Timestamp } from "@/components/timestamp";
 import { StatusChip } from "@/components/ui/status-chip";
 import { AssetForm } from "../asset-form";
 import { EditDetails } from "./edit-details";
@@ -119,11 +122,6 @@ function toDisplayPrice(value: string): string | null {
         maximumFractionDigits: 2,
       })
     : value;
-}
-
-/** Deterministic and timezone-explicit — the server's locale is not the reader's. */
-function formatTimestamp(value: Date): string {
-  return `${value.toISOString().slice(0, 16).replace("T", " ")} UTC`;
 }
 
 /**
@@ -466,7 +464,22 @@ export default async function AssetDetailPage({
               This asset has never been assigned.
             </p>
           ) : (
-            <Table>
+            <ResponsiveTable
+              tableTestId="holders-table"
+              cardsTestId="holders-cards"
+              cards={
+                <AssignmentCardList
+                  subject="person"
+                  rows={assignments}
+                  label="Everyone who has held this asset"
+                />
+              }
+              // Unbounded — an asset accumulates holders for its whole life —
+              // and sitting at the foot of the page, so it gets a scroll pane
+              // and the sticky header that pane makes possible.
+              sticky
+              containerClassName={SCROLL_PANE}
+            >
               <TableHeader>
                 <TableRow>
                   <TableHead>Person</TableHead>
@@ -494,12 +507,16 @@ export default async function AssetDetailPage({
                       {assignment.person.employeeRef ?? "—"}
                     </TableCell>
                     <TableCell>
-                      {formatTimestamp(assignment.checkedOutAt)}
+                      <Timestamp value={assignment.checkedOutAt} exact />
                     </TableCell>
                     <TableCell>
-                      {assignment.returnedAt
-                        ? formatTimestamp(assignment.returnedAt)
-                        : "Still held"}
+                      {assignment.returnedAt ? (
+                        <Timestamp value={assignment.returnedAt} exact />
+                      ) : (
+                        // A fact, not an empty cell — this table mixes open and
+                        // closed assignments, so "—" would be wrong here.
+                        "Still held"
+                      )}
                     </TableCell>
                     <TableCell className="whitespace-normal">
                       {assignment.conditionNotes ?? "—"}
@@ -507,7 +524,7 @@ export default async function AssetDetailPage({
                   </TableRow>
                 ))}
               </TableBody>
-            </Table>
+            </ResponsiveTable>
           )}
         </section>
       ) : null}
