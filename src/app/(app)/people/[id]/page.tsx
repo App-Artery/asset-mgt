@@ -212,9 +212,15 @@ function AssetCells({ assignment }: { assignment: PersonAssignmentRow }) {
 
 function Field({ label, value }: { label: string; value: string | null }) {
   return (
-    <div>
+    // `min-w-0` because a grid item defaults to `min-width: auto` and so
+    // refuses to shrink below its content, and `break-all` because an email is
+    // one unbreakable token. Without the pair, a long address pushed this grid
+    // 21px past its column and gave the whole page a sideways scroll on a
+    // phone — measured at 390px, where nothing was POSITIONED off-screen and
+    // only the document's scrollWidth gave it away.
+    <div className="min-w-0">
       <dt className="text-muted-foreground text-xs">{label}</dt>
-      <dd>{value ? value : "—"}</dd>
+      <dd className="break-all">{value ? value : "—"}</dd>
     </div>
   );
 }

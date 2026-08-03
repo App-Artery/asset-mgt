@@ -583,7 +583,7 @@ export default async function AssetsPage({
             that quietly declines to match the thing you typed is worse than one
             that says what it covers. It does NOT match holder names, by the
             AM-07 ruling — see src/lib/asset-search.ts. */}
-        <div className="flex flex-col gap-1.5">
+        <div className="flex w-full flex-col gap-1.5 sm:w-auto">
           <Label htmlFor="filter-q">Search</Label>
           <Input
             id="filter-q"
@@ -594,12 +594,19 @@ export default async function AssetsPage({
             className="w-full sm:w-72"
           />
         </div>
-        <div className="flex flex-col gap-1.5">
+        {/* `w-full sm:w-auto` on the wrapper and the select alike. The Select
+            primitive is `w-fit`, so it sizes to its WIDEST option — one long
+            category or site name and the filter row runs off the side of a
+            phone, taking the whole page's horizontal scroll with it (measured
+            at 390px: a 488px document). Matching the search input's own
+            `w-full sm:w-72` above. */}
+        <div className="flex w-full flex-col gap-1.5 sm:w-auto">
           <Label htmlFor="filter-category">Category</Label>
           <Select
             id="filter-category"
             name="categoryId"
             defaultValue={filters.categoryId ?? ""}
+            className="w-full sm:w-fit"
           >
             <option value="">All</option>
             {categories.map((category) => (
@@ -609,12 +616,13 @@ export default async function AssetsPage({
             ))}
           </Select>
         </div>
-        <div className="flex flex-col gap-1.5">
+        <div className="flex w-full flex-col gap-1.5 sm:w-auto">
           <Label htmlFor="filter-site">Site</Label>
           <Select
             id="filter-site"
             name="siteId"
             defaultValue={filters.siteId ?? ""}
+            className="w-full sm:w-fit"
           >
             <option value="">All</option>
             {sites.map((site) => (

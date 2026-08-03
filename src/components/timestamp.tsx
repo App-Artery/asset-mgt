@@ -25,13 +25,22 @@ export function Timestamp(props: TimestampProps) {
   const iso = props.value.toISOString();
   const exact = exactTimestamp(props.value);
 
+  // `whitespace-nowrap` so a timestamp never breaks mid-value. On a phone card
+  // the meta line wraps, and without this "2026-05-01 16:00 UTC" splits after
+  // "16:00", leaving a bare "UTC" on the next line — verified in a real browser
+  // at 390px. The separators around it are ordinary spaces, so the line still
+  // breaks BETWEEN values, which is where a break belongs.
   if (props.exact) {
     // No `title`: it would repeat the text the element already shows.
-    return <time dateTime={iso}>{exact}</time>;
+    return (
+      <time dateTime={iso} className="whitespace-nowrap">
+        {exact}
+      </time>
+    );
   }
 
   return (
-    <time dateTime={iso} title={exact}>
+    <time dateTime={iso} title={exact} className="whitespace-nowrap">
       {relativeTime(props.value, props.now)}
     </time>
   );
