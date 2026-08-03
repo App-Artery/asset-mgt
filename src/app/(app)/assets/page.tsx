@@ -16,28 +16,18 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { StatusChip } from "@/components/ui/status-chip";
+import { AssetTagLink } from "@/components/asset-tag-link";
 import { EstateBar, type EstateCounts } from "@/components/estate-bar";
 import { AssetCardList } from "./asset-card-list";
 import { RegisterPager } from "./register-pager";
 import {
-  Table,
+  ResponsiveTable,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-
-/**
- * The sticky treatment for every header cell.
- *
- * `sticky top-0` alone is not enough: the row beneath scrolls THROUGH the
- * header unless the header paints an opaque background, and the bottom border
- * has to be a shadow because a `<th>` border does not travel with a sticky
- * element in every engine.
- */
-const STICKY_HEAD =
-  "bg-background sticky top-0 z-10 shadow-[inset_0_-1px_0_var(--border)]";
 
 /** Empty selects submit ""; normalise before validation, not after. */
 const blankToUndefined = (value: unknown) =>
@@ -83,7 +73,6 @@ function SortableHead({
   const isActive = column === active;
   return (
     <TableHead
-      className={STICKY_HEAD}
       aria-sort={
         isActive ? (direction === "asc" ? "ascending" : "descending") : "none"
       }
@@ -652,120 +641,116 @@ export default async function AssetsPage({
         </p>
       ) : (
         <>
-          {/* Above md: the dense table. Its whitespace-nowrap and horizontal
-              overflow are correct here and only here. */}
-          <div data-testid="asset-table" className="hidden md:block">
-            {/* The table region owns the vertical scroll so the header can
-                stick to it — and so the estate bar and filters stay on screen
-                while a 400-row register scrolls under them. */}
-            <Table containerClassName="max-h-[calc(100vh-19rem)] min-h-64">
-              <TableHeader>
-                <TableRow>
-                  <SortableHead
-                    column="tag"
-                    label="Tag"
-                    active={sortColumn}
-                    direction={sortDirection}
-                    href={sortHref("tag")}
-                  />
-                  <SortableHead
-                    column="item"
-                    label="Make / model"
-                    active={sortColumn}
-                    direction={sortDirection}
-                    href={sortHref("item")}
-                  />
-                  <SortableHead
-                    column="category"
-                    label="Category"
-                    active={sortColumn}
-                    direction={sortDirection}
-                    href={sortHref("category")}
-                  />
-                  <SortableHead
-                    column="status"
-                    label="Status"
-                    active={sortColumn}
-                    direction={sortDirection}
-                    href={sortHref("status")}
-                  />
-                  {/* Not sortable: the holder comes from a second query, so the
+          {/* The table region owns the vertical scroll so the header can stick
+              to it — and so the estate bar and filters stay on screen while a
+              400-row register scrolls under them.
+
+              containerClassName is deliberately NOT SCROLL_PANE: this value is
+              tuned to this page's chrome (title, estate bar, filter row) and
+              means nothing on a page that does not have them. */}
+          <ResponsiveTable
+            tableTestId="asset-table"
+            cardsTestId="asset-card-list"
+            cards={<AssetCardList assets={rows} />}
+            sticky
+            containerClassName="max-h-[calc(100vh-19rem)] min-h-64"
+          >
+            <TableHeader>
+              <TableRow>
+                <SortableHead
+                  column="tag"
+                  label="Tag"
+                  active={sortColumn}
+                  direction={sortDirection}
+                  href={sortHref("tag")}
+                />
+                <SortableHead
+                  column="item"
+                  label="Make / model"
+                  active={sortColumn}
+                  direction={sortDirection}
+                  href={sortHref("item")}
+                />
+                <SortableHead
+                  column="category"
+                  label="Category"
+                  active={sortColumn}
+                  direction={sortDirection}
+                  href={sortHref("category")}
+                />
+                <SortableHead
+                  column="status"
+                  label="Status"
+                  active={sortColumn}
+                  direction={sortDirection}
+                  href={sortHref("status")}
+                />
+                {/* Not sortable: the holder comes from a second query, so the
                       database cannot order by it. See SORT_COLUMNS. */}
+                {canSeeHolders ? <TableHead>Held by</TableHead> : null}
+                <SortableHead
+                  column="site"
+                  label="Site"
+                  active={sortColumn}
+                  direction={sortDirection}
+                  href={sortHref("site")}
+                />
+                <SortableHead
+                  column="condition"
+                  label="Condition"
+                  active={sortColumn}
+                  direction={sortDirection}
+                  href={sortHref("condition")}
+                />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((row) => (
+                <TableRow
+                  key={row.id}
+                  // Retired kit recedes rather than disappearing: nothing in
+                  // this app is ever deleted, so the row stays and drains its
+                  // contrast (DESIGN-SYSTEM §6).
+                  className={
+                    row.status === "RETIRED" ? "text-muted-foreground" : ""
+                  }
+                >
+                  <TableCell>
+                    <AssetTagLink id={row.id} tag={row.tag} />
+                  </TableCell>
+                  <TableCell>
+                    {row.make} {row.model}
+                  </TableCell>
+                  <TableCell>{row.categoryName}</TableCell>
+                  <TableCell>
+                    <StatusChip status={row.status} />
+                  </TableCell>
                   {canSeeHolders ? (
-                    <TableHead className={STICKY_HEAD}>Held by</TableHead>
-                  ) : null}
-                  <SortableHead
-                    column="site"
-                    label="Site"
-                    active={sortColumn}
-                    direction={sortDirection}
-                    href={sortHref("site")}
-                  />
-                  <SortableHead
-                    column="condition"
-                    label="Condition"
-                    active={sortColumn}
-                    direction={sortDirection}
-                    href={sortHref("condition")}
-                  />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((row) => (
-                  <TableRow
-                    key={row.id}
-                    // Retired kit recedes rather than disappearing: nothing in
-                    // this app is ever deleted, so the row stays and drains its
-                    // contrast (DESIGN-SYSTEM §6).
-                    className={
-                      row.status === "RETIRED" ? "text-muted-foreground" : ""
-                    }
-                  >
                     <TableCell>
-                      <Link
-                        href={`/assets/${row.id}`}
-                        className="font-mono tabular-nums underline underline-offset-4"
-                      >
-                        {row.tag ?? "Untagged"}
-                      </Link>
-                    </TableCell>
-                    <TableCell>
-                      {row.make} {row.model}
-                    </TableCell>
-                    <TableCell>{row.categoryName}</TableCell>
-                    <TableCell>
-                      <StatusChip status={row.status} />
-                    </TableCell>
-                    {canSeeHolders ? (
-                      <TableCell>
-                        {/* Rendered only inside canSeeHolders, so the link can
+                      {/* Rendered only inside canSeeHolders, so the link can
                             never appear for a viewer /people/[id] would
                             reject. row.holder is null for those viewers
                             anyway — nothing was fetched. */}
-                        {row.holder ? (
-                          <Link
-                            href={`/people/${row.holder.id}`}
-                            className="underline underline-offset-4"
-                          >
-                            {row.holder.name}
-                          </Link>
-                        ) : (
-                          "—"
-                        )}
-                      </TableCell>
-                    ) : null}
-                    <TableCell>{row.siteName ?? "—"}</TableCell>
-                    <TableCell>
-                      {row.condition ? CONDITION_LABELS[row.condition] : "—"}
+                      {row.holder ? (
+                        <Link
+                          href={`/people/${row.holder.id}`}
+                          className="underline underline-offset-4"
+                        >
+                          {row.holder.name}
+                        </Link>
+                      ) : (
+                        "—"
+                      )}
                     </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-
-          {/* Below md: one card per asset, tag first (AM-06). */}
-          <AssetCardList assets={rows} />
+                  ) : null}
+                  <TableCell>{row.siteName ?? "—"}</TableCell>
+                  <TableCell>
+                    {row.condition ? CONDITION_LABELS[row.condition] : "—"}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </ResponsiveTable>
 
           {/* Outside the breakpoint pair on purpose: one footer for both
               shapes, so the range a phone reads and the range a desktop reads
