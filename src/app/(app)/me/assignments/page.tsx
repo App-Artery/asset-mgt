@@ -1,10 +1,13 @@
-import Link from "next/link";
 import type { Prisma } from "@prisma/client";
-import { STATUS_LABELS } from "@/lib/asset-lifecycle";
 import { requireRole } from "@/lib/authz";
 import { getDb } from "@/lib/db";
+import { AssetTagLink } from "@/components/asset-tag-link";
+import { AssignmentCardList } from "@/components/assignment-card-list";
+import { SectionHeading } from "@/components/section-heading";
+import { Timestamp } from "@/components/timestamp";
+import { StatusChip } from "@/components/ui/status-chip";
 import {
-  Table,
+  ResponsiveTable,
   TableBody,
   TableCell,
   TableHead,
@@ -26,11 +29,6 @@ import {
  * `requireRole` covers all four roles: this is the ONLY place a `STAFF_RO`
  * user sees assignment data, and only ever their own (DESIGN §2.1).
  */
-
-/** Deterministic and timezone-explicit — the server's locale is not the reader's. */
-function formatTimestamp(value: Date): string {
-  return `${value.toISOString().slice(0, 16).replace("T", " ")} UTC`;
-}
 
 /**
  * No `person` relation is traversed anywhere on this page: the scope IS the
@@ -100,13 +98,25 @@ export default async function MyAssignmentsPage() {
       ) : (
         <>
           <section className="flex flex-col gap-4">
-            <h2 className="text-lg font-medium">Currently held</h2>
+            <SectionHeading>Currently held</SectionHeading>
             {open.length === 0 ? (
               <p className="text-muted-foreground text-sm">
                 You are not holding any assets.
               </p>
             ) : (
-              <Table>
+              // No `sticky`: one person's open kit is a short list, and a
+              // scroll pane on four rows is worse than none.
+              <ResponsiveTable
+                tableTestId="held-table"
+                cardsTestId="held-cards"
+                cards={
+                  <AssignmentCardList
+                    subject="asset"
+                    rows={open}
+                    label="Assets you are currently holding"
+                  />
+                }
+              >
                 <TableHeader>
                   <TableRow>
                     <TableHead>Tag</TableHead>
@@ -119,7 +129,7 @@ export default async function MyAssignmentsPage() {
                   {open.map((assignment) => (
                     <TableRow key={assignment.id}>
                       <TableCell>
-                        <AssetLink
+                        <AssetTagLink
                           id={assignment.asset.id}
                           tag={assignment.asset.tag}
                         />
@@ -128,20 +138,20 @@ export default async function MyAssignmentsPage() {
                         {assignment.asset.make} {assignment.asset.model}
                       </TableCell>
                       <TableCell>
-                        {STATUS_LABELS[assignment.asset.status]}
+                        <StatusChip status={assignment.asset.status} />
                       </TableCell>
                       <TableCell>
-                        {formatTimestamp(assignment.checkedOutAt)}
+                        <Timestamp value={assignment.checkedOutAt} exact />
                       </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
-              </Table>
+              </ResponsiveTable>
             )}
           </section>
 
           <section className="flex flex-col gap-4">
-            <h2 className="text-lg font-medium">Previously held</h2>
+            <SectionHeading>Previously held</SectionHeading>
             {past.length === 0 ? (
               <p className="text-muted-foreground text-sm">
                 Nothing has been returned yet.
@@ -152,7 +162,17 @@ export default async function MyAssignmentsPage() {
                   Status is the asset&apos;s status now, not its status at the
                   time it was returned.
                 </p>
-                <Table>
+                <ResponsiveTable
+                  tableTestId="past-table"
+                  cardsTestId="past-cards"
+                  cards={
+                    <AssignmentCardList
+                      subject="asset"
+                      rows={past}
+                      label="Assets you have returned"
+                    />
+                  }
+                >
                   <TableHeader>
                     <TableRow>
                       <TableHead>Tag</TableHead>
@@ -166,7 +186,7 @@ export default async function MyAssignmentsPage() {
                     {past.map((assignment) => (
                       <TableRow key={assignment.id}>
                         <TableCell>
-                          <AssetLink
+                          <AssetTagLink
                             id={assignment.asset.id}
                             tag={assignment.asset.tag}
                           />
@@ -175,33 +195,29 @@ export default async function MyAssignmentsPage() {
                           {assignment.asset.make} {assignment.asset.model}
                         </TableCell>
                         <TableCell>
-                          {STATUS_LABELS[assignment.asset.status]}
+                          <StatusChip status={assignment.asset.status} />
                         </TableCell>
                         <TableCell>
-                          {formatTimestamp(assignment.checkedOutAt)}
+                          <Timestamp value={assignment.checkedOutAt} exact />
                         </TableCell>
                         <TableCell>
-                          {assignment.returnedAt
-                            ? formatTimestamp(assignment.returnedAt)
-                            : "—"}
+                          {/* No `: "—"` fallback. This table's `where` is
+                              `returnedAt: { not: null }`, so the null branch
+                              was unreachable — dead code that read as a real
+                              state a viewer might encounter. */}
+                          {assignment.returnedAt ? (
+                            <Timestamp value={assignment.returnedAt} exact />
+                          ) : null}
                         </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
-                </Table>
+                </ResponsiveTable>
               </>
             )}
           </section>
         </>
       )}
     </>
-  );
-}
-
-function AssetLink({ id, tag }: { id: string; tag: string | null }) {
-  return (
-    <Link href={`/assets/${id}`} className="underline underline-offset-4">
-      {tag ?? "Untagged"}
-    </Link>
   );
 }
