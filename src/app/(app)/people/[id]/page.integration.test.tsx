@@ -293,4 +293,35 @@ describe.skipIf(!testDatabaseUrl)("person view (real DB)", () => {
       "NEXT_HTTP_ERROR_FALLBACK;404",
     );
   });
+
+  it("renders both shapes for both tables", async () => {
+    await signInAs(Role.ADMIN_IT);
+    const html = await renderPerson(personId);
+
+    expect(html).toContain('data-testid="held-table"');
+    expect(html).toContain('data-testid="held-cards"');
+    expect(html).toContain('data-testid="past-table"');
+    expect(html).toContain('data-testid="past-cards"');
+
+    // Each row reaches both shapes from a single query. A card list that
+    // dropped a row, or a conditional applied to the table and missed on the
+    // cards, changes these numbers.
+    expect(html.split(heldTag).length - 1).toBe(2);
+    expect(html.split(returnedTag).length - 1).toBe(2);
+    // The condition note reaches the phone shape too, not just the table.
+    expect(html.split("Scuffed lid").length - 1).toBe(2);
+  });
+
+  it("keeps the email out of BOTH shapes for PROCUREMENT and FINANCE", async () => {
+    // The card list is a second render path for person data. The fetch is
+    // still the real guard — personSelectFor never selected the email for
+    // these roles — but the card shape is new, so this confirms the property
+    // survived the conversion rather than assuming it.
+    for (const role of [Role.PROCUREMENT, Role.FINANCE]) {
+      await signInAs(role);
+      const html = await renderPerson(personId);
+      expect(html).not.toContain(personEmail);
+      expect(html).toContain('data-testid="held-cards"');
+    }
+  });
 });
