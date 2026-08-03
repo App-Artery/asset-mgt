@@ -5,6 +5,7 @@ import { useActionState, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SectionHeading } from "@/components/section-heading";
 import {
   createCategory,
   createSite,
@@ -56,12 +57,7 @@ export function ReferenceSection({
 
   return (
     <section className="flex min-w-0 flex-col gap-3">
-      <div className="flex items-baseline gap-2">
-        <h2 className="font-semibold">{title}</h2>
-        <span className="text-muted-foreground font-mono text-xs tabular-nums">
-          {rows.length}
-        </span>
-      </div>
+      <SectionHeading count={rows.length}>{title}</SectionHeading>
 
       {rows.length === 0 ? (
         <p className="text-muted-foreground text-sm">
