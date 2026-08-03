@@ -88,4 +88,89 @@ function TableCell({ className, ...props }: React.ComponentProps<"td">) {
   );
 }
 
-export { Table, TableHeader, TableBody, TableRow, TableHead, TableCell };
+/**
+ * The sticky treatment, applied to header cells only.
+ *
+ * Targeted at `thead th` from the `<table>` element rather than pasted onto
+ * each `TableHead` — the register had this constant and spread it across seven
+ * `SortableHead` call sites, which is seven chances to add an eighth column
+ * without it.
+ *
+ * `sticky top-0` alone is not enough: rows scroll THROUGH a header that paints
+ * no background, and the bottom rule has to be an inset shadow because a `<th>`
+ * border does not travel with a sticky element in every engine.
+ */
+const STICKY_HEAD =
+  "[&_thead_th]:bg-background [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:z-10 [&_thead_th]:shadow-[inset_0_-1px_0_var(--border)]";
+
+/**
+ * A scroll pane for a table that can grow without bound and sits below other
+ * content. The register does NOT use this — its `max-h-[calc(100vh-19rem)]` is
+ * tuned to its own chrome (title, estate bar, filter row) and means nothing on
+ * another page.
+ */
+export const SCROLL_PANE = "max-h-[32rem] min-h-32";
+
+/**
+ * One table, two shapes (docs/DESIGN-SYSTEM.md §5).
+ *
+ * `<table>` at `md:` and above, a stacked card list below, from the same row
+ * data in the same component. Two separate screens would drift; a
+ * `useMediaQuery` would turn a server component into a client one for no gain.
+ *
+ * **`cards` is required, and that is the point.** It is not a convenience
+ * prop — it is the reason a table added to this app in a year cannot ship
+ * without a phone shape. A lint rule or a review checklist would catch the same
+ * mistake later and less reliably.
+ *
+ * `sticky` is meaningless without `containerClassName` bounding the height: the
+ * wrapper is `overflow-x-auto`, which CSS computes to `auto` on BOTH axes, so
+ * the header anchors to that div rather than the viewport and a div that never
+ * scrolls never sticks. Pass `SCROLL_PANE` unless you have a tuned value.
+ */
+function ResponsiveTable({
+  cards,
+  tableTestId,
+  cardsTestId,
+  sticky,
+  containerClassName,
+  className,
+  children,
+}: {
+  cards: React.ReactNode;
+  tableTestId: string;
+  cardsTestId: string;
+  sticky?: boolean;
+  containerClassName?: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <>
+      {/* Above md: the dense table. Its whitespace-nowrap and horizontal
+          overflow are correct here and only here. */}
+      <div data-testid={tableTestId} className="hidden md:block">
+        <Table
+          containerClassName={containerClassName}
+          className={cn(sticky && STICKY_HEAD, className)}
+        >
+          {children}
+        </Table>
+      </div>
+      {/* Below md: one card per row. */}
+      <div data-testid={cardsTestId} className="md:hidden">
+        {cards}
+      </div>
+    </>
+  );
+}
+
+export {
+  ResponsiveTable,
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+};
