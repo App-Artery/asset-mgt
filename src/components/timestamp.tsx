@@ -1,0 +1,38 @@
+import { exactTimestamp, relativeTime } from "@/lib/relative-time";
+
+/**
+ * One `<time>` element for the whole app, in two variants.
+ *
+ * `formatTimestamp` had been copy-pasted verbatim into three page files and was
+ * byte-identical to `exactTimestamp` in src/lib/relative-time.ts.
+ *
+ * The variants are not a style choice — they answer different questions:
+ *
+ * - `exact` — assignment dates and prose. This is an audit register: a
+ *   checked-out date is reconciled against, and hover does not exist on touch,
+ *   so "3 weeks ago" with no way to reach the real value is a loss.
+ * - default — "how stale is this?" cells: last sign-in, the history timeline.
+ *   The phrase leads and the exact value stays one hover away, never replaced.
+ *
+ * `now` is a required parameter of the relative variant rather than a
+ * `Date.now()` read, so two rows on a page cannot disagree about "now".
+ */
+type TimestampProps =
+  | { value: Date; exact: true; now?: never }
+  | { value: Date; exact?: false; now: Date };
+
+export function Timestamp(props: TimestampProps) {
+  const iso = props.value.toISOString();
+  const exact = exactTimestamp(props.value);
+
+  if (props.exact) {
+    // No `title`: it would repeat the text the element already shows.
+    return <time dateTime={iso}>{exact}</time>;
+  }
+
+  return (
+    <time dateTime={iso} title={exact}>
+      {relativeTime(props.value, props.now)}
+    </time>
+  );
+}
