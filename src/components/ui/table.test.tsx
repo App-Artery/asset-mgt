@@ -11,26 +11,48 @@ import {
   TableRow,
 } from "./table";
 
-function renderTable(
-  props: Partial<Parameters<typeof ResponsiveTable>[0]> = {},
-) {
+const BODY = (
+  <>
+    <TableHeader>
+      <TableRow>
+        <TableHead>Tag</TableHead>
+      </TableRow>
+    </TableHeader>
+    <TableBody>
+      <TableRow>
+        <TableCell>AST-0412</TableCell>
+      </TableRow>
+    </TableBody>
+  </>
+);
+
+/**
+ * Two helpers rather than one taking a Partial: `sticky` and
+ * `containerClassName` are a prop UNION now, and a spread of a partial cannot
+ * satisfy a union — which is the union doing its job.
+ */
+function renderTable() {
   return render(
     <ResponsiveTable
       cards={<p>cards</p>}
       tableTestId="thing-table"
       cardsTestId="thing-cards"
-      {...props}
     >
-      <TableHeader>
-        <TableRow>
-          <TableHead>Tag</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        <TableRow>
-          <TableCell>AST-0412</TableCell>
-        </TableRow>
-      </TableBody>
+      {BODY}
+    </ResponsiveTable>,
+  );
+}
+
+function renderStickyTable() {
+  return render(
+    <ResponsiveTable
+      cards={<p>cards</p>}
+      tableTestId="thing-table"
+      cardsTestId="thing-cards"
+      sticky
+      containerClassName={SCROLL_PANE}
+    >
+      {BODY}
     </ResponsiveTable>,
   );
 }
@@ -58,18 +80,30 @@ describe("ResponsiveTable", () => {
   });
 
   it("sticks the header to its scroll container when asked", () => {
-    renderTable({ sticky: true, containerClassName: SCROLL_PANE });
+    renderStickyTable();
     const table = screen.getByRole("table");
     // Targeted at thead th only: a sticky <td> would freeze the first column.
     expect(table.className).toContain("[&_thead_th]:sticky");
     expect(table.className).toContain("[&_thead_th]:bg-background");
   });
 
-  it("bounds the container height, without which sticky is a silent no-op", () => {
-    const { container } = renderTable({
-      sticky: true,
-      containerClassName: SCROLL_PANE,
-    });
+  it("will not typecheck sticky without a height to stick within", () => {
+    // The pairing is enforced by the prop union, not by this assertion —
+    // `sticky` alone is a compile error, so the guard is `pnpm typecheck` and
+    // this records why. @ts-expect-error FAILS THE BUILD if the union is ever
+    // loosened back to two independent optionals, which is what makes it a
+    // real guard rather than a comment.
+    const invalid = (
+      // @ts-expect-error sticky requires containerClassName
+      <ResponsiveTable cards={null} tableTestId="t" cardsTestId="c" sticky>
+        <TableBody />
+      </ResponsiveTable>
+    );
+    expect(invalid).toBeTruthy();
+  });
+
+  it("passes the scroll pane through to the container", () => {
+    const { container } = renderStickyTable();
     // The wrapper is overflow-x-auto, which CSS computes to `auto` on BOTH
     // axes — so the header anchors to this div, and a div with no bounded
     // height never scrolls for it to stick within.

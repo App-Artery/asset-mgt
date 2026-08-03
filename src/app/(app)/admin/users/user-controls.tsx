@@ -3,7 +3,7 @@
 import { useActionState, useState } from "react";
 import type { Role } from "@prisma/client";
 import { ROLE_LABELS, ROLE_ORDER } from "@/lib/labels";
-import { exactTimestamp, relativeTime } from "@/lib/relative-time";
+import { Timestamp } from "@/components/timestamp";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
@@ -65,14 +65,7 @@ export function SignInCell({
   now: Date;
 }) {
   if (lastSignInAt) {
-    return (
-      <time
-        dateTime={lastSignInAt.toISOString()}
-        title={exactTimestamp(lastSignInAt)}
-      >
-        {relativeTime(lastSignInAt, now)}
-      </time>
-    );
+    return <Timestamp value={lastSignInAt} now={now} />;
   }
 
   return (
@@ -87,13 +80,7 @@ export function SignInCell({
       <span className="text-muted-foreground text-xs">
         {lastLinkSentAt ? (
           <>
-            Link sent{" "}
-            <time
-              dateTime={lastLinkSentAt.toISOString()}
-              title={exactTimestamp(lastLinkSentAt)}
-            >
-              {relativeTime(lastLinkSentAt, now)}
-            </time>
+            Link sent <Timestamp value={lastLinkSentAt} now={now} />
           </>
         ) : (
           "No link sent yet"

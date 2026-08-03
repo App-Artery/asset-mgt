@@ -67,11 +67,17 @@ export default async function PersonPage({
         // situation visible instead of invisible.
         <p className="border-destructive/50 text-destructive rounded-md border px-3 py-2 text-sm">
           {/* `exactTimestamp` directly, NOT <Timestamp>. This is prose, and a
-              <time> element in the middle of a sentence splits the text node —
-              which is invisible on screen but breaks any assertion that the
-              phrase and the value are adjacent. The shared formatter is still
-              the one being called, so the de-duplication holds; what does not
-              belong here is the element wrapper. */}
+              <time> mid-sentence buys a machine-readable attribute nothing
+              consumes while splitting the sentence into three text nodes. The
+              shared formatter is still the one being called, so the
+              de-duplication holds; what does not belong here is the element
+              wrapper.
+
+              An existing test asserts the phrase and the value are adjacent,
+              and it stays green because of this — but that is a consequence,
+              not the reason. A test is not grounds to shape markup; it could
+              have moved to a textContent comparison had the element been worth
+              having. It is not. */}
           This person&apos;s account was deactivated on{" "}
           {exactTimestamp(deactivatedAt)}. Anything still listed under
           &ldquo;currently held&rdquo; has not been returned.

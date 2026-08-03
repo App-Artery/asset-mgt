@@ -126,25 +126,32 @@ export const SCROLL_PANE = "max-h-[32rem] min-h-32";
  * `sticky` is meaningless without `containerClassName` bounding the height: the
  * wrapper is `overflow-x-auto`, which CSS computes to `auto` on BOTH axes, so
  * the header anchors to that div rather than the viewport and a div that never
- * scrolls never sticks. Pass `SCROLL_PANE` unless you have a tuned value.
+ * scrolls never sticks.
+ *
+ * So the two are a UNION, not two independent optionals — `sticky` on its own
+ * does not typecheck. Same reasoning as `cards` above: a silent no-op that a
+ * docblock warns about is a mistake waiting to be made, and the compiler is a
+ * better place to catch it than a review. Pass `SCROLL_PANE` unless you have a
+ * tuned value (the register does).
  */
+type ResponsiveTableProps = {
+  cards: React.ReactNode;
+  tableTestId: string;
+  cardsTestId: string;
+  children: React.ReactNode;
+} & (
+  | { sticky: true; containerClassName: string }
+  | { sticky?: false; containerClassName?: string }
+);
+
 function ResponsiveTable({
   cards,
   tableTestId,
   cardsTestId,
   sticky,
   containerClassName,
-  className,
   children,
-}: {
-  cards: React.ReactNode;
-  tableTestId: string;
-  cardsTestId: string;
-  sticky?: boolean;
-  containerClassName?: string;
-  className?: string;
-  children: React.ReactNode;
-}) {
+}: ResponsiveTableProps) {
   return (
     <>
       {/* Above md: the dense table. Its whitespace-nowrap and horizontal
@@ -152,7 +159,7 @@ function ResponsiveTable({
       <div data-testid={tableTestId} className="hidden md:block">
         <Table
           containerClassName={containerClassName}
-          className={cn(sticky && STICKY_HEAD, className)}
+          className={cn(sticky && STICKY_HEAD)}
         >
           {children}
         </Table>

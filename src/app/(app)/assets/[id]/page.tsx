@@ -24,6 +24,7 @@ import {
 import { relativeTime } from "@/lib/relative-time";
 import { AssignmentCardList } from "@/components/assignment-card-list";
 import { Timestamp } from "@/components/timestamp";
+import { SectionHeading } from "@/components/section-heading";
 import { StatusChip } from "@/components/ui/status-chip";
 import { AssetForm } from "../asset-form";
 import { EditDetails } from "./edit-details";
@@ -352,9 +353,7 @@ export default async function AssetDetailPage({
         <div className="flex min-w-0 flex-col gap-8">
           {canSeeHolders ? (
             <section className="flex flex-col gap-3">
-              <h2 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
-                Custody
-              </h2>
+              <SectionHeading>Custody</SectionHeading>
               {/* Out of the field grid, where it was the eleventh of eleven
                   entries, and into the page's second element: "who has this"
                   is the question the register exists to answer. */}
@@ -395,9 +394,7 @@ export default async function AssetDetailPage({
             /* Rendered for write roles only — but that is UX. requireRole
                inside each action is what enforces it. */
             <section className="flex flex-col gap-3">
-              <h2 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
-                Lifecycle
-              </h2>
+              <SectionHeading>Lifecycle</SectionHeading>
               <LifecycleActions
                 assetId={asset.id}
                 moves={moves}
@@ -430,23 +427,14 @@ export default async function AssetDetailPage({
             </EditDetails>
           ) : (
             <section className="flex flex-col gap-3">
-              <h2 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
-                Details
-              </h2>
+              <SectionHeading>Details</SectionHeading>
               {detailFields}
             </section>
           )}
         </div>
 
         <section className="flex min-w-0 flex-col gap-3 lg:border-l lg:pl-8">
-          <div className="flex items-baseline gap-2">
-            <h2 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
-              History
-            </h2>
-            <span className="text-muted-foreground font-mono text-xs tabular-nums">
-              {history.length}
-            </span>
-          </div>
+          <SectionHeading count={history.length}>History</SectionHeading>
           <HistoryTimeline entries={history} now={now} />
           <p className="text-muted-foreground text-xs">
             Append-only. Corrections are new entries.
@@ -456,9 +444,7 @@ export default async function AssetDetailPage({
 
       {canSeeHolders ? (
         <section className="flex flex-col gap-3">
-          <h2 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
-            Every holder
-          </h2>
+          <SectionHeading>Every holder</SectionHeading>
           {assignments.length === 0 ? (
             <p className="text-muted-foreground text-sm">
               This asset has never been assigned.

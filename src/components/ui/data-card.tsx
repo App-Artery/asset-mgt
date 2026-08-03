@@ -77,7 +77,14 @@ export function DataCardHeadline({ children }: { children: React.ReactNode }) {
  * "[object Object]".
  */
 export function DataCardMeta({ parts }: { parts: React.ReactNode[] }) {
-  const shown = parts.filter(Boolean);
+  // Explicitly empty, NOT filter(Boolean). `React.ReactNode` admits `0`, and a
+  // falsy filter would silently drop a legitimate count — every caller happens
+  // to pass strings today, which is exactly the kind of luck that stops holding
+  // the first time someone passes a number.
+  const shown = parts.filter(
+    (part) =>
+      part !== null && part !== undefined && part !== "" && part !== false,
+  );
   if (shown.length === 0) {
     // No parts is no line — an empty muted span still occupies a gap.
     return null;
@@ -88,8 +95,18 @@ export function DataCardMeta({ parts }: { parts: React.ReactNode[] }) {
       className="text-muted-foreground text-xs"
     >
       {shown.map((part, index) => (
+        // Index keys are safe here: every part is stateless and the whole list
+        // re-renders from server props.
         <Fragment key={index}>
-          {index > 0 ? <span aria-hidden="true"> · </span> : null}
+          {/* The spaces sit OUTSIDE the aria-hidden span. Hiding them too
+              leaves some screen readers concatenating adjacent inline text with
+              no boundary — "Jane MwangiNairobiLaptop". */}
+          {index > 0 ? (
+            <>
+              {" "}
+              <span aria-hidden="true">·</span>{" "}
+            </>
+          ) : null}
           {part}
         </Fragment>
       ))}
