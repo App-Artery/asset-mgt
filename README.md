@@ -106,7 +106,13 @@ record — keep all three current when anything here changes.
    enumerated with placeholders in [.env.example](.env.example) — real secrets
    live only in Vercel env vars and gitignored `.env`.
 5. **Migrations** — run `pnpm db:deploy` against the Neon `DATABASE_URL` at
-   provisioning (and on schema changes until a deploy pipeline owns it).
+   provisioning. Thereafter the deploy pipeline owns it: a production build
+   applies pending migrations before it builds (ADR-002). That requires a
+   `MIGRATE_DATABASE_URL` environment variable in Vercel — the **unpooled**
+   connection string, **Production scope only**, sensitive. Its absence from
+   Preview is the primary guard stopping a preview build from migrating
+   production, so never widen its scope. See
+   §[Recovering a failed migration](#recovering-a-failed-migration).
 6. **Deploy and seed** — push to `main`. Then provision users against Neon:
    `DATABASE_URL=<neon-pooled-url> SEED_ADMIN_EMAIL=<org-admin-mailbox> STAFF_CSV=seed-data/staff.csv pnpm db:seed`
    (the admin mailbox must be an org mailbox with MFA — client obligation,
@@ -182,6 +188,66 @@ item 5); `psql` has no such default, so pass the connection string every time:
 ```sh
 psql "$TARGET_DATABASE_URL" -f reconcile.sql   # never a bare psql / prisma
 ```
+
+## Recovering a failed migration
+
+> **This runbook is WRITTEN BUT UNPROVEN.** Issue #31 is the condition that
+> executes it against a Neon branch and corrects whatever turns out to be wrong.
+> Until that closes, treat every command here as a first draft and read Prisma's
+> output before acting on it.
+
+Under ADR-002 a production build applies migrations before it builds. A failure
+therefore **blocks every production deploy, hotfixes included** — Prisma P3009:
+_"Until you recover from the failed state, further migrations using
+`prisma migrate deploy` are impossible."_ Recovery needs the direct production
+credential and a human.
+
+Set the target once (unpooled — the pooler breaks Prisma's session advisory
+lock), and never run a bare `prisma` command, because the CLI autoloads `.env`:
+
+```sh
+DIRECT="<the MIGRATE_DATABASE_URL value>"
+DATABASE_URL="$DIRECT" pnpm exec prisma migrate status
+```
+
+There are **three** distinct frozen states and they are not interchangeable.
+
+**1. Failed and rolled back.** The migration errored and Postgres undid it. The
+database matches the previous migration. Mark it rolled back, fix the migration
+file, redeploy:
+
+```sh
+DATABASE_URL="$DIRECT" pnpm exec prisma migrate resolve --rolled-back <migration_name>
+```
+
+**2. Failed and partially applied.** Prisma does **not** guarantee a migration
+file runs in a single transaction — the docs describe migrations that "can only
+be partially executed". **Inspect the schema before choosing.** If some
+statements landed, decide whether to finish them by hand and mark it applied, or
+undo them by hand and mark it rolled back:
+
+```sh
+# only after confirming, by inspection, that the schema now matches the file
+DATABASE_URL="$DIRECT" pnpm exec prisma migrate resolve --applied <migration_name>
+```
+
+Choosing wrong here is not recoverable by re-running anything — this register's
+entire value is its audit trail, so prefer inspecting for an hour over guessing.
+
+**3. Applied but checksum-drifted.** Editing an already-applied migration file
+changes its SHA-256 and `migrate deploy` refuses to proceed. **This repo has two
+hand-edited migrations** (`am02_asset_lifecycle` carries the
+`Asset_tag_required_when_tracked` CHECK; `am03_assignment` carries the partial
+unique index) with "PRESERVE if regenerated" banners. Before ADR-002 a stray
+`prisma migrate dev` regeneration cost a local annoyance; now it freezes
+production deploys. **Fix: restore the file's original content from git** —
+`git log -p -- prisma/migrations/<name>/migration.sql` — rather than resolving
+anything, because the database is correct and the file is not.
+
+**While frozen**, an urgent code-only hotfix can still ship by temporarily
+reverting the migration-bearing commit on `main` so no migration is pending.
+Prefer fixing forward; `migrate deploy` is forward-only and will not un-apply
+anything.
 
 ## Intake artefacts
 
