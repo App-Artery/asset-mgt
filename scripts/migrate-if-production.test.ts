@@ -8,7 +8,7 @@
 // the guard it names — the standing rule in this project after seven guards that
 // stayed green while broken (LEARNINGS §Testing).
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PrismaClient } from "@prisma/client";
@@ -17,6 +17,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 
 const SCRIPT = path.resolve(import.meta.dirname, "migrate-if-production.sh");
+const BUILD_SCRIPT = path.resolve(import.meta.dirname, "vercel-build.sh");
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 
 /** A database the guards must leave completely alone. */
@@ -150,25 +151,6 @@ describe.skipIf(!testDatabaseUrl)("migrate-if-production.sh (real DB)", () => {
     // And it refused BEFORE touching anything.
     expect(await migrationsTableExists(otherUrl)).toBe(false);
   }, 60_000);
-
-  it("C2: accepts a pooled runtime URL against the unpooled migrate URL", async () => {
-    // The normal production shape: same database, one through the pooler. If
-    // normalisation broke, every real deploy would fail closed — so this is the
-    // test that stops C2 from being a deploy-blocking false positive.
-    const pooled = new URL(sandboxUrl);
-    pooled.hostname = `${pooled.hostname}-pooler`;
-
-    const run = runGuard({
-      VERCEL_ENV: "production",
-      VERCEL_GIT_COMMIT_REF: "main",
-      MIGRATE_DATABASE_URL: sandboxUrl,
-      DATABASE_URL: pooled.toString(),
-    });
-
-    // Reaches the migration (already applied by the positive control above).
-    expect(run.status, `stderr: ${run.stderr}`).toBe(0);
-    expect(run.stderr).not.toContain("different databases");
-  }, 120_000);
 });
 
 // No database needed: these assert the script refuses before it would connect.
@@ -224,6 +206,152 @@ describe("migrate-if-production.sh (guards that never reach a database)", () => 
     expect(run.stdout).toContain("skipping migrations");
   });
 
+  it("C1: fails closed when VERCEL_ENV is unset entirely", () => {
+    // The one input that decides whether production migrates, and the only one
+    // that used to fail OPEN. VERCEL_ENV is present only while the project's
+    // "Automatically expose System Environment Variables" toggle is on — a UI
+    // setting outside code review. If unset skipped quietly, flipping that
+    // toggle would silently disable this whole gate.
+    const run = runGuard({
+      VERCEL_GIT_COMMIT_REF: "main",
+      MIGRATE_DATABASE_URL: UNREACHABLE,
+      DATABASE_URL: UNREACHABLE,
+    });
+
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain("not a recognised Vercel environment");
+  });
+
+  it("C1: fails closed on an unrecognised VERCEL_ENV value", () => {
+    const run = runGuard({
+      VERCEL_ENV: "staging",
+      VERCEL_GIT_COMMIT_REF: "main",
+      MIGRATE_DATABASE_URL: UNREACHABLE,
+      DATABASE_URL: UNREACHABLE,
+    });
+
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain("not a recognised Vercel environment");
+  });
+
+  it("C2: refuses a POOLED MIGRATE_DATABASE_URL", () => {
+    // Both sides of the same-database comparison are -pooler-stripped, so a
+    // pooled migrate URL passes that check. Prisma's session advisory lock is
+    // broken over PgBouncer, and the resulting failure freezes every deploy.
+    const pooled =
+      "postgresql://u:p@ep-x-1-pooler.eu-central-1.aws.neon.tech:5432/db";
+    const direct = "postgresql://u:p@ep-x-1.eu-central-1.aws.neon.tech:5432/db";
+
+    const run = runGuard({
+      VERCEL_ENV: "production",
+      VERCEL_GIT_COMMIT_REF: "main",
+      MIGRATE_DATABASE_URL: pooled,
+      DATABASE_URL: direct,
+    });
+
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain("POOLED");
+  });
+
+  it("C2: accepts the real production shape — pooled runtime, unpooled migrate", () => {
+    // The shape every real deploy has. If normalisation broke, production would
+    // fail CLOSED on every push, so this is the test that stops C2 from being a
+    // deploy-blocking false positive.
+    //
+    // Neon-shaped hosts on purpose: `-pooler` sits immediately before the first
+    // dot, which is what the anchored pattern keys on. A bare `localhost-pooler`
+    // is not a shape Neon ever produces and testing against it would be testing
+    // a fiction.
+    const run = runGuard({
+      VERCEL_ENV: "production",
+      VERCEL_GIT_COMMIT_REF: "main",
+      MIGRATE_DATABASE_URL:
+        "postgresql://u:p@ep-x-1.eu-central-1.aws.neon.tech:1/db",
+      DATABASE_URL:
+        "postgresql://u:p@ep-x-1-pooler.eu-central-1.aws.neon.tech:1/db",
+    });
+
+    // Past BOTH C2 checks — it gets as far as trying to connect, and fails
+    // there because the host is unroutable, which is the point.
+    expect(run.stderr).not.toContain("different databases");
+    expect(run.stderr).not.toContain("POOLED");
+  }, 60_000);
+
+  it("C2: does not corrupt a host that merely contains the word pooler", () => {
+    // `ep-pooler-dawn-42` is a legitimate endpoint name. An unanchored
+    // replace() rewrites it to `ep-dawn-42` — a different, real endpoint — so
+    // two distinct databases would compare equal.
+    const run = runGuard({
+      VERCEL_ENV: "production",
+      VERCEL_GIT_COMMIT_REF: "main",
+      MIGRATE_DATABASE_URL: "postgresql://u:p@ep-pooler-dawn-42.neon.tech:1/db",
+      DATABASE_URL: "postgresql://u:p@ep-dawn-42.neon.tech:1/db",
+    });
+
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain("different databases");
+  });
+
+  it("C2: distinguishes databases that differ only by port", () => {
+    const run = runGuard({
+      VERCEL_ENV: "production",
+      VERCEL_GIT_COMMIT_REF: "main",
+      MIGRATE_DATABASE_URL: "postgresql://u:p@127.0.0.1:5432/db",
+      DATABASE_URL: "postgresql://u:p@127.0.0.1:5433/db",
+    });
+
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain("different databases");
+  });
+
+  it("C2: distinguishes schemas within one database", () => {
+    const run = runGuard({
+      VERCEL_ENV: "production",
+      VERCEL_GIT_COMMIT_REF: "main",
+      MIGRATE_DATABASE_URL: "postgresql://u:p@127.0.0.1:1/db?schema=staging",
+      DATABASE_URL: "postgresql://u:p@127.0.0.1:1/db?schema=public",
+    });
+
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain("different databases");
+  });
+
+  it("C1c: vercel-build.sh does NOT build when the guard fails", () => {
+    // The property this whole change exists to provide, and the inverse of the
+    // test below. It rests on `set -e` over an unwrapped command: an added
+    // `|| true`, an `if`, or moving the call into a pipeline turns the gate off
+    // with every other test still green.
+    const bin = mkdtempSync(path.join(tmpdir(), "adr002-bin-"));
+    const log = path.join(bin, "invocations.log");
+    writeFileSync(
+      path.join(bin, "pnpm"),
+      `#!/usr/bin/env bash\necho "$@" >> "${log}"\n`,
+      { mode: 0o755 },
+    );
+
+    let status = 0;
+    try {
+      execFileSync("bash", [BUILD_SCRIPT], {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        env: {
+          NODE_ENV: process.env.NODE_ENV ?? "test",
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          HOME: process.env.HOME ?? "",
+          VERCEL_ENV: "production",
+          VERCEL_GIT_COMMIT_REF: "feature/x", // C8 refuses
+        },
+      });
+    } catch (error) {
+      status = (error as { status?: number }).status ?? 1;
+    }
+
+    expect(status).not.toBe(0);
+    // The build must never have been invoked at all.
+    expect(existsSync(log)).toBe(false);
+  });
+
   it("C1c: vercel-build.sh reaches the build after the guard skips", () => {
     // The composition, end to end. Without this a shell typo in vercel-build.sh
     // is discovered on the first production deploy, because ci.yml runs
@@ -240,27 +368,23 @@ describe("migrate-if-production.sh (guards that never reach a database)", () => 
       { mode: 0o755 },
     );
 
-    const run = execFileSync(
-      "bash",
-      [path.resolve(import.meta.dirname, "vercel-build.sh")],
-      {
-        cwd: REPO_ROOT,
-        encoding: "utf8",
-        env: {
-          NODE_ENV: process.env.NODE_ENV ?? "test",
-          PATH: `${bin}:${process.env.PATH ?? ""}`,
-          HOME: process.env.HOME ?? "",
-          VERCEL_ENV: "preview",
-          VERCEL_GIT_COMMIT_REF: "feature/x",
-        },
+    const run = execFileSync("bash", [BUILD_SCRIPT], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      env: {
+        NODE_ENV: process.env.NODE_ENV ?? "test",
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        HOME: process.env.HOME ?? "",
+        VERCEL_ENV: "preview",
+        VERCEL_GIT_COMMIT_REF: "feature/x",
       },
-    );
+    });
 
     expect(run).toContain("skipping migrations");
     expect(readFileSync(log, "utf8").trim()).toBe("build");
   });
 
-  it("C7: never prints a connection string to stdout or stderr", () => {
+  it("C7: never prints a connection string when it refuses early", () => {
     const sentinel = "s3nt1nel-must-never-appear-in-a-build-log";
     const run = runGuard({
       VERCEL_ENV: "production",
@@ -274,4 +398,23 @@ describe("migrate-if-production.sh (guards that never reach a database)", () => 
     expect(run.stdout).not.toContain(sentinel);
     expect(run.stderr).not.toContain(sentinel);
   });
+
+  it("C7: never prints a connection string when Prisma itself fails to connect", () => {
+    // The case above refuses at C2 and never invokes `pnpm db:deploy` — so it
+    // does not cover the one point where the credential is handed to a
+    // third-party CLI. Matching URLs get past every guard and fail at the
+    // connection instead, which is the path that actually carries the secret.
+    const sentinel = "s3nt1nel-prisma-connect-failure";
+    const url = `postgresql://u:${sentinel}@127.0.0.1:1/adr002_unreachable`;
+    const run = runGuard({
+      VERCEL_ENV: "production",
+      VERCEL_GIT_COMMIT_REF: "main",
+      MIGRATE_DATABASE_URL: url,
+      DATABASE_URL: url,
+    });
+
+    expect(run.status).not.toBe(0);
+    expect(run.stdout).not.toContain(sentinel);
+    expect(run.stderr).not.toContain(sentinel);
+  }, 60_000);
 });

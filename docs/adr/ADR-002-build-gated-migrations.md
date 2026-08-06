@@ -1,6 +1,6 @@
 # ADR-002 — Production migrations run in the Vercel build, gated on `main`
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-06
 - **Tier:** T3 (production DDL automation + PII processing). Advisor ruling
   2026-08-06: **GO-WITH-CONDITIONS** on the build gate, **NO-GO as specified**
@@ -160,15 +160,41 @@ deferred. Until #31 closes, treat the runbook as untested.
 - **C1a** — script run with `VERCEL_ENV=preview` and `MIGRATE_DATABASE_URL`
   populated with a reachable throwaway database leaves `_prisma_migrations`
   untouched. _Deleting the `VERCEL_ENV` conditional turns this red._
+- **C1a′** — `VERCEL_ENV` **unset, empty, or an unrecognised value** exits
+  non-zero. _Replacing the `case` with `!= production` turns this red._
+
+  Added after review. The original spelling was the only input in the script
+  that failed OPEN, and it is reachable without touching the repository:
+  `VERCEL_ENV` exists only while the project's "Automatically expose System
+  Environment Variables" setting is on — a UI toggle, changeable by anyone with
+  project access. A `!= production` test turns that toggle into a silent kill
+  switch for this entire gate, printing a reassuring "skipping migrations" while
+  promoting code ahead of its schema. Only `preview` and `development` skip;
+  everything else refuses to build.
+
 - **C1b** — `VERCEL_ENV=production` with `MIGRATE_DATABASE_URL` unset exits
   non-zero **before** the build. _Adding a fallback turns this red._
-- **C1c** — the script run end-to-end in preview mode reaches `pnpm build`.
-  _A shell typo turns this red_ — otherwise the first execution of this file is
-  in production.
+- **C1c** — the script run end-to-end in preview mode reaches `pnpm build`, and
+  a build whose guard FAILS never invokes `pnpm` at all. _A shell typo turns the
+  first red; adding `|| true` to the guard call turns the second red._ The
+  second is the property the whole ADR exists to provide, and it rests on
+  `set -e` over an unwrapped command.
 - **C2** — migrate target and runtime target pointing at different databases
   exits non-zero **before** `migrate deploy`. _Deleting the comparison turns
-  this red._ Compared on host+path with `-pooler` and query params normalised
-  away, without printing either value.
+  this red._ Compared on host, **port**, path and **`?schema=`**, with `-pooler`
+  stripped only where Neon puts it (immediately before the first dot), and
+  without printing either value. Dropping port or schema turns a dedicated test
+  red: two Postgres instances on one host, or two schemas in one database, are
+  not the same database.
+- **C2′** — a **pooled** `MIGRATE_DATABASE_URL` exits non-zero. _Deleting the
+  check turns this red._
+
+  Added after review. Both sides of the C2 comparison are `-pooler`-stripped, so
+  a pooled migrate URL sails through it, and the unpooled requirement was
+  enforced by prose alone. Neon surfaces the pooled string more prominently than
+  the direct one, so a credential rotation is a realistic route to a session
+  advisory lock over transaction pooling — which by §Consequences freezes every
+  production deploy.
 
   **Open question, resolved fail-closed.** C2 needs `DATABASE_URL` present in
   the build container. Sensitive variables are hidden from read-back — which is

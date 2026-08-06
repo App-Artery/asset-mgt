@@ -4,7 +4,7 @@ Cloud-based IT asset lifecycle management — an internal tool replacing Asset T
 
 **Status:** scaffold complete — delivery in progress. First story: **AM-01 (auth/roles, Tier 3)**.
 
-**Stack:** Next.js 15 (App Router, dynamic SSR) · Prisma 6 + Postgres 17 · Auth.js v5 (Resend magic-link, JWT sessions) · Tailwind v4 + shadcn/ui · Vitest · Vercel (`fra1`) + Neon (`eu-central-1`). Design and constraints: [docs/DESIGN.md](docs/DESIGN.md) · [ADR-001](docs/adr/ADR-001-vercel-neon-stack.md) · [CLAUDE.md](CLAUDE.md).
+**Stack:** Next.js 15 (App Router, dynamic SSR) · Prisma 6 + Postgres 17 · Auth.js v5 (Resend magic-link, JWT sessions) · Tailwind v4 + shadcn/ui · Vitest · Vercel (`fra1`) + Neon (`eu-central-1`). Design and constraints: [docs/DESIGN.md](docs/DESIGN.md) · [ADR-001](docs/adr/ADR-001-vercel-neon-stack.md) · [ADR-002](docs/adr/ADR-002-build-gated-migrations.md) · [CLAUDE.md](CLAUDE.md).
 
 ## Quickstart
 
@@ -102,9 +102,22 @@ record — keep all three current when anything here changes.
    delivers to the Resend account owner, so magic links will NOT reach staff
    until a verified domain backs `AUTH_EMAIL_FROM`.
 4. **Vercel env vars** (Production + Preview): `DATABASE_URL`, `AUTH_SECRET`
-   (`openssl rand -base64 32`), `AUTH_RESEND_KEY`, `AUTH_EMAIL_FROM`. All
-   enumerated with placeholders in [.env.example](.env.example) — real secrets
-   live only in Vercel env vars and gitignored `.env`.
+   (`openssl rand -base64 32`), `AUTH_RESEND_KEY`, `AUTH_EMAIL_FROM`. Plus, at
+   **Production scope only**, `MIGRATE_DATABASE_URL` — the **unpooled**
+   connection string, marked sensitive, used by the build-time migration gate
+   ([ADR-002](docs/adr/ADR-002-build-gated-migrations.md)). Its absence from
+   Preview is the primary guard stopping a preview build from migrating
+   production, so **never widen its scope**; the `VERCEL_ENV` check in
+   `scripts/migrate-if-production.sh` is only defence in depth. All enumerated
+   with placeholders in [.env.example](.env.example) — real secrets live only in
+   Vercel env vars and gitignored `.env`.
+
+   Note that Production and Preview currently share one Neon project and one
+   `AUTH_SECRET` ([#27](https://github.com/App-Artery/asset-mgt/issues/27)), so
+   preview deployments read and write the production register and a
+   preview-minted session validates on production. Recorded as accepted risk in
+   ADR-002.
+
 5. **Migrations** — run `pnpm db:deploy` against the Neon `DATABASE_URL` at
    provisioning. Thereafter the deploy pipeline owns it: a production build
    applies pending migrations before it builds (ADR-002). That requires a
@@ -244,10 +257,18 @@ production deploys. **Fix: restore the file's original content from git** —
 `git log -p -- prisma/migrations/<name>/migration.sql` — rather than resolving
 anything, because the database is correct and the file is not.
 
-**While frozen**, an urgent code-only hotfix can still ship by temporarily
-reverting the migration-bearing commit on `main` so no migration is pending.
-Prefer fixing forward; `migrate deploy` is forward-only and will not un-apply
-anything.
+**While frozen, reverting the migration-bearing commit does NOT unblock
+deploys** — and reaching for it first is the natural mistake. P3009 is raised
+from the _database_, not the migrations folder: `migrate deploy` pre-flights
+`_prisma_migrations` for rows with `finished_at IS NULL AND rolled_back_at IS
+NULL` before it computes anything pending, so deleting the migration directory
+leaves the failed row, the check, and the red build exactly where they were.
+Under incident pressure that costs a revert PR, a review and another failed
+build before anyone notices it changed nothing.
+
+**Resolve first** (state 1, 2 or 3 above). Only then is a revert of the
+migration-bearing commit optional, and only if you also want the schema change
+gone. `migrate deploy` is forward-only and never un-applies anything.
 
 ## Intake artefacts
 
@@ -258,6 +279,7 @@ anything.
 | [PRD](docs/intake/asset-mgt/PRD.md)                         | Seven stories in two milestones; Milestone 1 is the Asset Tiger cutover path |
 | [Scaffold design](docs/DESIGN.md)                           | The approved skeleton this repo implements                                   |
 | [ADR-001](docs/adr/ADR-001-vercel-neon-stack.md)            | Vercel + Neon stack decision and accepted risks                              |
+| [ADR-002](docs/adr/ADR-002-build-gated-migrations.md)       | Production migrations run in the Vercel build, gated on `main`               |
 
 ---
 
