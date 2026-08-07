@@ -240,6 +240,17 @@ export type HolderResolution =
 export async function createHolderResolver(
   db: PrismaClient | Tx,
   fold: (name: string) => string,
+  /**
+   * Whether a stub this resolver creates may be remembered for later rows.
+   *
+   * TRUE on a commit run, where the stub is really there. FALSE on a dry run,
+   * where each row's transaction is rolled back — remembering the id would hand
+   * the next row naming that person a `personId` that no longer exists, and the
+   * assignment insert would fail on the foreign key. The caller dedupes the
+   * REPORT by name instead, so "how many people would this create" is still
+   * answered once per human rather than once per asset they hold.
+   */
+  options: { cacheCreations: boolean } = { cacheCreations: true },
 ): Promise<{
   resolve: (tx: Tx, displayName: string) => Promise<HolderResolution>;
 }> {
@@ -276,7 +287,9 @@ export async function createHolderResolver(
       // rather than creating another. Without this the import would duplicate
       // every holder who appears on more than one asset — which, in a register
       // of ~400 assets and far fewer people, is most of them.
-      byFold.set(key, [person.id]);
+      if (options.cacheCreations) {
+        byFold.set(key, [person.id]);
+      }
       return { kind: "created", personId: person.id };
     },
   };

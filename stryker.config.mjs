@@ -77,6 +77,24 @@ const config = {
     // The four §5 guards (second act, dismiss-never-submits, locked in
     // flight, result shown).
     "src/components/confirm-action-dialog.tsx",
+    // AM-04, added IN THE STORY THAT WROTE THEM (advisor condition C33). A
+    // scoped mutate list does not grow with the codebase: modules land, the
+    // list stays as it was, and the newest guards — the least hand-red-proved
+    // of any in the tree — are the ones nobody mutates. These four carry the
+    // import's whole guard surface.
+    //
+    // The status map's undefined branch, the strict decimal regex, the serial
+    // date conversion, the header check.
+    "src/lib/import-map.ts",
+    // The zip caps and the streaming abort, the sheet resolution, the
+    // date1904 rejection, the cell-type allowlist.
+    "src/lib/import-xlsx.ts",
+    // The exactly-one-IMPORTED-event write, exact-unique-or-nothing holder
+    // resolution, and the advisory lock.
+    "src/lib/asset-import.ts",
+    // Insert-only idempotency, the dry-run rollback, and the cache flags that
+    // keep a rolled-back id from reaching the next row.
+    "src/lib/import-run.ts",
   ],
 
   vitest: { configFile: "vitest.config.ts" },

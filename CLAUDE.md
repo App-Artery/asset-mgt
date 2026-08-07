@@ -110,6 +110,53 @@ ADR: `docs/adr/ADR-001-vercel-neon-stack.md` · Stories: `docs/intake/asset-mgt/
   constraint is the enforcement.
 - **Emails are lowercased at every write and lookup** (sign-in policy, admin
   actions, seed). A case mismatch silently locks staff out.
+- **`Person.email` is optional, and no synthesized address is ever written.**
+  A holder is not necessarily a system user — login identity is `User.email`,
+  which stays required and unique. The Asset Tiger export (AM-04) has no email
+  column, so imported holders are created with `email: null`. A placeholder or
+  `@…invalid` address is forbidden: it fabricates a personal datum, and two
+  same-named people either collide on a confusing P2002 or **merge into one
+  person**. A blank email must land as `NULL`, never `''` — Postgres permits
+  many NULLs in a unique index but exactly one `''`, the same trap as
+  `Asset.tag`. The cost of this is that `@unique` no longer dedupes imported
+  people, which is why assignee matching is exact-unique-or-nothing with human
+  sign-off and why import runs take a session advisory lock.
+- **Exactly one `IMPORTED` event per imported asset** (`src/lib/asset-import.ts`).
+  The import is a deliberately separate write path because every shortcut into
+  `asset-admin.ts` fabricates history: `createAssetWithEvent` cannot express a
+  legacy `ASSIGNED` row at all, create-then-transition writes `STATUS_CHANGED`
+  events for transitions that never happened, and `assignAsset` would date a
+  two-year-old handover to today. Assignments are inserted through
+  `createOpenAssignmentTx` with the source `checkedOutAt`. Tests assert an
+  EXACT event count, never a floor — a floor passes for the very shape this
+  avoids.
+- **The import is a CLI, and there is no upload endpoint** (`pnpm db:import`).
+  `--commit` holds a session-scoped advisory lock across ~400 per-row
+  transactions, so it needs an **unpooled** connection and does not fit a
+  Vercel function. Its events carry `actorId: null`, the same "system action"
+  convention as the seed scripts. **No spreadsheet-parser dependency beyond
+  `fflate`**, and no general XML parser — the reader hand-scans exactly four
+  zip entries (billion-laughs/XXE). npm's `xlsx` is stale at 0.18.5 with fixes
+  shipped only to SheetJS's own CDN; `exceljs` evaluates formulas and images
+  we never read.
+- **`ImportBatch` is a bounded state row carrying no personal data.** Written
+  once at run start, updated exactly once at run end, never deleted — the same
+  bounded exception `Assignment` carries. `report` holds no name, email,
+  employeeRef, or verbatim row echo; rows are identified by source row number
+  plus tag, people by `personId`. The export's `Created by` column is **not
+  imported anywhere** — parking it here would be a code-written copy of staff
+  names in a table with no role gate and a blanket no-delete rule, strictly
+  worse than the operator-typed `AssetEvent.notes` risk it appears to dodge.
+  Names reach only the in-flight sign-off report an operator reads.
+- **Real client exports never enter the repo.** `.gitignore` blocks
+  `*.xlsx`/`*.xls`/`*.csv` repo-wide with `!*.example.csv`, **by extension and
+  not by directory** — the first version of the rule was `docs/*.xlsx`, which
+  git anchors to that directory, leaving `docs/features/AM-04/` uncovered.
+  Fixtures are synthetic and must reproduce the real file's awkward shapes
+  (sparse cells, money as a shared string, dates as bare serials) or they prove
+  nothing. Note the PII is not only in the cells: `docProps/core.xml` carries
+  `lastModifiedBy` and `xl/workbook.xml` an `absPath` with the exporter's
+  Windows username, so the parser reads neither.
 - **Sign-in throttle lives in `src/lib/sign-in-policy.ts`**, counting
   `VerificationToken.createdAt` rows (3/email/15 min; global 30/hour and
   ~80/rolling 24h), called from the `signIn` callback in `src/auth.ts`. Every sign-in rejection is an
