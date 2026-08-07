@@ -44,16 +44,17 @@ and sites afterwards at `/admin/reference` without a deploy.
 
 ### Scripts
 
-| Command                                                   | What it does                                                                                         |
-| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `pnpm dev` / `pnpm build` / `pnpm start`                  | Next.js dev / production build / serve                                                               |
-| `pnpm lint` / `pnpm typecheck`                            | ESLint (flat config) / `tsc --noEmit`                                                                |
-| `pnpm test`                                               | Vitest. Real-DB integration tests run only when `TEST_DATABASE_URL` is set — with it unset they skip |
-| `pnpm test:mutation`                                      | Stryker over the guard-bearing modules. **Requires `TEST_DATABASE_URL`** — refuses to run without it |
-| `pnpm db:migrate` / `pnpm db:deploy` / `pnpm db:generate` | Prisma migrate dev / deploy / generate                                                               |
-| `pnpm db:seed`                                            | Seed staff + first admin (needs `SEED_ADMIN_EMAIL`; optional `STAFF_CSV`)                            |
-| `pnpm db:seed:reference`                                  | Seed asset categories + sites (optional `REFERENCE_CSV`); fails if it would leave zero categories    |
-| `pnpm format`                                             | Prettier over the repo                                                                               |
+| Command                                                   | What it does                                                                                          |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `pnpm dev` / `pnpm build` / `pnpm start`                  | Next.js dev / production build / serve                                                                |
+| `pnpm lint` / `pnpm typecheck`                            | ESLint (flat config) / `tsc --noEmit`                                                                 |
+| `pnpm test`                                               | Vitest. Real-DB integration tests run only when `TEST_DATABASE_URL` is set — with it unset they skip  |
+| `pnpm test:mutation`                                      | Stryker over the guard-bearing modules. **Requires `TEST_DATABASE_URL`** — refuses to run without it  |
+| `pnpm db:migrate` / `pnpm db:deploy` / `pnpm db:generate` | Prisma migrate dev / deploy / generate                                                                |
+| `pnpm db:seed`                                            | Seed staff + first admin (needs `SEED_ADMIN_EMAIL`; optional `STAFF_CSV`)                             |
+| `pnpm db:seed:reference`                                  | Seed asset categories + sites (optional `REFERENCE_CSV`); fails if it would leave zero categories     |
+| `pnpm db:import <file.xlsx>`                              | Asset Tiger import. Dry run by default; `--commit --batch=<id>` writes. See the cutover runbook below |
+| `pnpm format`                                             | Prettier over the repo                                                                                |
 
 Husky runs lint-staged on commit and full-repo lint + typecheck on push. CI
 (the `ci` required check) runs lint, typecheck, the full test suite against a
@@ -162,6 +163,88 @@ record — keep all three current when anything here changes.
    [docs/DPA-TRANSFER-NOTE.md](docs/DPA-TRANSFER-NOTE.md). ODPC
    data-controller registration is the client's obligation via its own
    counsel — flag at handover.
+
+## Runbook — Asset Tiger cutover (AM-04)
+
+The migration import. **Read this before running it against production**: it
+creates `Person` records and permanent reference rows, and nothing in this
+codebase is ever deleted.
+
+### Before you start
+
+1. **The backup must have been RESTORED, not just taken.** ADR-001's nightly
+   `pg_dump` has to have been restored once into a throwaway Neon branch and
+   checked, and the result recorded, before any production `--commit`. An
+   untested backup is a belief, and this register becomes the client's only
+   system of record the moment Asset Tiger is cancelled.
+2. **Get the export out of the repo.** Real exports carry staff names, serials,
+   PO numbers and cost centres. `.gitignore` blocks `*.xlsx`/`*.xls`/`*.csv`
+   repo-wide, but keep the file outside the working tree anyway, and delete it
+   from the machine when the cutover is signed off. The client's own copy is
+   the retained original.
+3. **Use the unpooled connection.** `--commit` holds a session-scoped advisory
+   lock across every row's transaction; on a pooled connection that lock may be
+   released onto a different backend, which silently removes the only thing
+   stopping two concurrent runs from each creating their own copy of one
+   person. Set `DIRECT_DATABASE_URL`.
+
+### 1. Dry run
+
+```bash
+DIRECT_DATABASE_URL='postgresql://…' pnpm db:import ~/cutover/export.xlsx
+```
+
+Writes nothing. It performs every read and write and rolls each row back, so
+what it reports is what the database will actually accept — not a guess.
+
+It prints:
+
+- **counts** — imported / skipped / conflicts / quarantined, which must add up
+  to the source row count;
+- **quarantined rows** with a reason and the **row numbers to look up in your
+  own spreadsheet**;
+- **SIGN-OFF 1 — reference rows** it would create;
+- **SIGN-OFF 2 — assignee resolution**, each person listed once as `MATCHED`,
+  `WILL CREATE` or `AMBIGUOUS`;
+- the batch id, and both hashes.
+
+### 2. Sign off — the two one-way doors
+
+These are the reason the import is two commands, and neither is recoverable by
+re-running:
+
+- **Reference rows are renamed, never removed, and a rename cannot merge.** A
+  typo signed off here is permanent. Check that "DOCKING STATION" is not about
+  to join an existing "Docking Station" as a second category.
+- **A wrong holder cannot be undone.** `Assignment` is write-once and
+  `AssetEvent` is append-only, so the only available correction is a fabricated
+  return. Anything listed `AMBIGUOUS` was quarantined rather than guessed —
+  resolve those people by hand first, then re-run the dry run.
+
+Attach the printed report to the cutover checklist. It is the sign-off record.
+
+### 3. Commit
+
+```bash
+DIRECT_DATABASE_URL='postgresql://…' \
+  pnpm db:import ~/cutover/export.xlsx --commit --batch=<id from step 1>
+```
+
+`--commit` re-parses the file and recomputes both the source SHA-256 and the
+normalised row hash. **If the file changed at all since the dry run, it
+refuses** — so what is committed is provably what was signed off. Edited the
+spreadsheet to fix quarantined rows? That is a new dry run and a new sign-off.
+
+### 4. Reconcile
+
+Re-running the import is safe and is the intended way to finish a partial run:
+it is **insert-only**, so an existing tag is skipped and never updated. A row
+whose other fields changed is reported as a `CONFLICT` and still not written —
+which is deliberate, so a re-run cannot revert edits an admin made in the app
+between runs.
+
+Then run the data-integrity queries below, and check the register's own totals
+against Asset Tiger's before cancelling the subscription.
 
 ## Runbook — data integrity
 
