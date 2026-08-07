@@ -72,8 +72,14 @@ const optionalCondition = z.preprocess(
 const assetFieldsSchema = z.object({
   tag: optionalText,
   categoryId: z.string().min(1),
+  // make and model stay REQUIRED here even though the columns became nullable
+  // in AM-04. The nullability serves imported legacy rows, whose Brand and
+  // Model cells are blank; someone typing a new asset into this form knows what
+  // they are holding. Relaxing it because the column allows null would let the
+  // register's own data quality drift down to the export's.
   make: requiredText,
   model: requiredText,
+  description: optionalText,
   serial: optionalText,
   purchasedAt: optionalDate,
   purchasePrice: optionalPrice,
@@ -81,6 +87,10 @@ const assetFieldsSchema = z.object({
   warrantyUntil: optionalDate,
   condition: optionalCondition,
   siteId: optionalId,
+  poNumber: optionalText,
+  costCentre: optionalText,
+  department: optionalText,
+  location: optionalText,
 });
 
 // Status is absent from the edit schema on purpose: transitions are the only
@@ -139,6 +149,7 @@ function assetFieldsFrom(formData: FormData) {
     categoryId: formData.get("categoryId"),
     make: formData.get("make"),
     model: formData.get("model"),
+    description: formData.get("description"),
     serial: formData.get("serial"),
     purchasedAt: formData.get("purchasedAt"),
     purchasePrice: formData.get("purchasePrice"),
@@ -146,6 +157,10 @@ function assetFieldsFrom(formData: FormData) {
     warrantyUntil: formData.get("warrantyUntil"),
     condition: formData.get("condition"),
     siteId: formData.get("siteId"),
+    poNumber: formData.get("poNumber"),
+    costCentre: formData.get("costCentre"),
+    department: formData.get("department"),
+    location: formData.get("location"),
   };
 }
 

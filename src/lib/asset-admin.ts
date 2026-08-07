@@ -76,8 +76,11 @@ export type InitialAssetStatus = (typeof INITIAL_ASSET_STATUSES)[number];
 type EditableAssetFields = {
   tag: string | null;
   categoryId: string;
-  make: string;
-  model: string;
+  // Nullable since AM-04 (imported rows have neither), though the FORM still
+  // requires both — see the note on assetFieldsSchema in the actions.
+  make: string | null;
+  model: string | null;
+  description: string | null;
   serial: string | null;
   purchasedAt: Date | null;
   purchasePrice: number | null;
@@ -85,13 +88,22 @@ type EditableAssetFields = {
   warrantyUntil: Date | null;
   condition: AssetCondition | null;
   siteId: string | null;
+  poNumber: string | null;
+  costCentre: string | null;
+  department: string | null;
+  location: string | null;
 };
 
+// Every field here is diffed by `hasChanged` to build the UPDATED event's
+// "Changed: …" note, so a field added to the type and forgotten here would be
+// editable but invisible in the audit trail. `satisfies` catches a name that is
+// not a field; only this comment catches a field that is not listed.
 const EDITABLE_FIELDS = [
   "tag",
   "categoryId",
   "make",
   "model",
+  "description",
   "serial",
   "purchasedAt",
   "purchasePrice",
@@ -99,6 +111,10 @@ const EDITABLE_FIELDS = [
   "warrantyUntil",
   "condition",
   "siteId",
+  "poNumber",
+  "costCentre",
+  "department",
+  "location",
 ] as const satisfies readonly (keyof EditableAssetFields)[];
 
 /** Trim, and treat an empty tag as absent — "" is not a tag, and it would
@@ -157,6 +173,7 @@ export async function createAssetWithEvent(
         categoryId: input.categoryId,
         make: input.make,
         model: input.model,
+        description: input.description,
         serial: input.serial,
         purchasedAt: input.purchasedAt,
         purchasePrice: input.purchasePrice,
@@ -165,6 +182,10 @@ export async function createAssetWithEvent(
         status: input.status,
         condition: input.condition,
         siteId: input.siteId,
+        poNumber: input.poNumber,
+        costCentre: input.costCentre,
+        department: input.department,
+        location: input.location,
       },
     });
     await tx.assetEvent.create({
@@ -227,6 +248,7 @@ export async function updateAssetWithEvent(
         categoryId: input.categoryId,
         make: input.make,
         model: input.model,
+        description: input.description,
         serial: input.serial,
         purchasedAt: input.purchasedAt,
         purchasePrice: input.purchasePrice,
@@ -234,6 +256,10 @@ export async function updateAssetWithEvent(
         warrantyUntil: input.warrantyUntil,
         condition: input.condition,
         siteId: input.siteId,
+        poNumber: input.poNumber,
+        costCentre: input.costCentre,
+        department: input.department,
+        location: input.location,
       },
     });
     await tx.assetEvent.create({

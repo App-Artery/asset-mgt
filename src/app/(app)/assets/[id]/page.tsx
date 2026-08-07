@@ -8,6 +8,7 @@ import {
   type PrismaClient,
 } from "@prisma/client";
 import { ASSET_TRANSITIONS } from "@/lib/asset-lifecycle";
+import { assetDisplayName } from "@/lib/asset-display";
 import { requireRole } from "@/lib/authz";
 import { CONDITION_LABELS } from "@/lib/labels";
 import { getDb } from "@/lib/db";
@@ -345,7 +346,7 @@ export default async function AssetDetailPage({
         </h1>
         <StatusChip status={asset.status} />
         <p className="text-muted-foreground w-full text-sm">
-          {asset.make} {asset.model} · {asset.category.name}
+          {assetDisplayName(asset)} · {asset.category.name}
         </p>
       </div>
 
@@ -413,8 +414,12 @@ export default async function AssetDetailPage({
                   id: asset.id,
                   tag: asset.tag ?? "",
                   categoryId: asset.categoryId,
-                  make: asset.make,
-                  model: asset.model,
+                  // ?? "" like every other nullable field below: the form's
+                  // inputs are controlled and a null value would make them
+                  // uncontrolled. Imported assets have neither (AM-04).
+                  make: asset.make ?? "",
+                  model: asset.model ?? "",
+                  description: asset.description ?? "",
                   serial: asset.serial ?? "",
                   purchasedAt: toDateInput(asset.purchasedAt),
                   purchasePrice,
@@ -422,6 +427,10 @@ export default async function AssetDetailPage({
                   warrantyUntil: toDateInput(asset.warrantyUntil),
                   condition: asset.condition ?? "",
                   siteId: asset.siteId ?? "",
+                  poNumber: asset.poNumber ?? "",
+                  costCentre: asset.costCentre ?? "",
+                  department: asset.department ?? "",
+                  location: asset.location ?? "",
                 }}
               />
             </EditDetails>

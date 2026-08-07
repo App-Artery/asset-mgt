@@ -63,8 +63,22 @@ model Asset {
   tag           String?         @unique
   categoryId    String
   category      Category        @relation(fields: [categoryId], references: [id])
-  make          String
-  model         String
+  // Nullable since AM-04: the client's Asset Tiger export leaves Brand and
+  // Model blank on real rows and carries the whole of what an asset IS in
+  // `description`. Deriving make from the description works for "HP …" and
+  // INVENTS a manufacturer for everything else, unrecoverably; rejecting
+  // blank-Brand rows would have quarantined most of the ~400-row cutover.
+  // The register's own creation form still requires both — the nullability
+  // serves imported history, not new data entry.
+  //
+  // Display precedence is stated ONCE, centrally, in `assetDisplayName`
+  // (src/lib/asset-display.ts): make+model → else description → else tag.
+  make          String?
+  model         String?
+  // The Asset Tiger identity line, and the only populated name on an imported
+  // row. Searchable (src/lib/asset-search.ts) — without it `?q=` silently dies
+  // at cutover, because make and model are blank on every imported asset.
+  description   String?
   serial        String?
   purchasedAt   DateTime?
   purchasePrice Decimal?        @db.Decimal(12, 2)
@@ -74,6 +88,18 @@ model Asset {
   condition     AssetCondition?
   siteId        String?
   site          Site?           @relation(fields: [siteId], references: [id])
+  // AM-04 export columns with a settled meaning. `PID` and `Asset Type` are
+  // deliberately NOT here (AM-04-C4/C31): nobody can state what the code "CE"
+  // means, and a column holding an unexplained value gets rendered, exported
+  // and depended upon. They are decided from the full-export census instead.
+  //
+  // `location` is free text WITHIN a site (the export's Location column feeds
+  // Site.name — AM-04-C17); costCentre and poNumber are the finance and
+  // procurement handles AM-05's export will want.
+  poNumber      String?
+  costCentre    String?
+  department    String?
+  location      String?
   assignments   Assignment[]
   events        AssetEvent[]
   createdAt     DateTime        @default(now())
@@ -92,7 +118,25 @@ model Asset {
 model Person {
   id          String       @id @default(cuid())
   name        String
-  email       String       @unique
+  // Nullable since AM-04. A HOLDER IS NOT NECESSARILY A SYSTEM USER: login
+  // identity is User.email, which stays required and unique. The schema already
+  // agreed everywhere else — `user` is optional, and assertPersonAssignable
+  // documents that a person with no User is fully assignable (contractors,
+  // staff without logins). The Asset Tiger export has no email column at all,
+  // so under the old shape an imported holder could not be created.
+  //
+  // NO SYNTHESIZED ADDRESS, EVER — no placeholder, no @…invalid (AM-04-C2). It
+  // fabricates a personal datum, and two same-named people either collide on a
+  // confusing P2002 or MERGE INTO ONE PERSON.
+  //
+  // A blank email must land as NULL, never '': Postgres permits many NULLs in a
+  // unique index but exactly one '', so the second email-less person would
+  // collide. Same trap as Asset.tag (am02 migration).
+  //
+  // The cost, accepted: this removes the dedupe key for exactly the rows the
+  // import creates, which is why assignee resolution is exact-unique-or-nothing
+  // with human sign-off (AM-04-C8/C9) rather than a fuzzy match.
+  email       String?      @unique
   // Employee number — never a national ID (brief §7.3).
   employeeRef String?      @unique
   assignments Assignment[]
@@ -178,14 +222,44 @@ model Site {
   assets Asset[]
 }
 
+// A STATE row, not an audit row — the same bounded exception `Assignment`
+// carries, and bounded the same way (AM-04-C5). It is written once at run
+// start, updated EXACTLY ONCE at run end (counts, report, finishedAt), and
+// never deleted. Nothing else may update it.
+//
+// NO PERSONAL DATA (AM-04-C6). `report` carries no name, no email, no
+// employeeRef, and no verbatim echo of a source row. Rows are identified by
+// source row number plus Asset Tag ID; people by `personId` only — the same
+// join-don't-copy pattern AssetEvent.assignmentId exists to enforce.
+//
+// This is deliberate and it is the reason the export's "Created by" column is
+// not imported ANYWHERE (AM-04-C7). Parking it here looked like the safe
+// alternative to AssetEvent.notes, and is worse: a CODE-WRITTEN copy of staff
+// names in a table with no role gate, no retention policy, and this codebase's
+// blanket no-delete rule. Names appear only in the IN-FLIGHT dry-run report an
+// operator reads and signs — a different artefact from this durable row.
+//
+// If this is ever surfaced in the app it is ADMIN_IT only, `requireRole` first
+// statement. Holding the no-personal-data line now is what keeps that surface
+// cheap later.
 model ImportBatch {
-  id         String   @id @default(cuid())
-  source     String
-  runAt      DateTime @default(now())
-  dryRun     Boolean
-  rowsOk     Int
-  rowsFailed Int
-  report     Json
+  id           String    @id @default(cuid())
+  source       String
+  runAt        DateTime  @default(now())
+  dryRun       Boolean
+  // Written at run end, with the row created at run start — hence the defaults
+  // and the nullable report.
+  finishedAt   DateTime?
+  rowsOk       Int       @default(0)
+  rowsFailed   Int       @default(0)
+  report       Json?
+  // AM-04-C21: `--commit --batch=<id>` re-parses the file and recomputes BOTH
+  // hashes, refusing on any difference. That is what makes "the committed data
+  // is the previewed data" provable while keeping ZERO server-side parsed
+  // state. sourceSha256 catches a swapped file; rowsHash catches a file that
+  // differs only in ways the parser normalises away.
+  sourceSha256 String
+  rowsHash     String
 }
 
 // ---------------------------------------------------------------------------

@@ -33,6 +33,7 @@ export type AssetFormValues = {
   categoryId: string;
   make: string;
   model: string;
+  description: string;
   serial: string;
   purchasedAt: string;
   purchasePrice: string;
@@ -40,6 +41,10 @@ export type AssetFormValues = {
   warrantyUntil: string;
   condition: string;
   siteId: string;
+  poNumber: string;
+  costCentre: string;
+  department: string;
+  location: string;
 };
 
 export function AssetForm({
@@ -135,6 +140,21 @@ export function AssetForm({
         </div>
       </div>
 
+      {/* Optional here, and the only name an IMPORTED asset has: Asset Tiger's
+          export leaves Brand and Model blank and carries the whole description
+          in one cell. Sits under make/model because for a hand-typed asset it
+          is the elaboration, and above serial because it is what a reader
+          scanning the form is actually looking for. */}
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor={fieldId("description")}>Description</Label>
+        <Input
+          id={fieldId("description")}
+          name="description"
+          defaultValue={asset?.description}
+          disabled={pending}
+        />
+      </div>
+
       <div className="flex flex-col gap-1.5">
         <Label htmlFor={fieldId("serial")}>Serial number</Label>
         <Input
@@ -187,6 +207,55 @@ export function AssetForm({
             name="warrantyUntil"
             type="date"
             defaultValue={asset?.warrantyUntil}
+            disabled={pending}
+          />
+        </div>
+      </div>
+
+      {/* The procurement and finance handles from the Asset Tiger export
+          (AM-04). Paired the way they are read: a PO number and a cost centre
+          answer "what did we buy this against", a department and a location
+          answer "where did it go". */}
+      <div className="flex gap-3">
+        <div className="flex flex-1 flex-col gap-1.5">
+          <Label htmlFor={fieldId("poNumber")}>PO number</Label>
+          <Input
+            id={fieldId("poNumber")}
+            name="poNumber"
+            defaultValue={asset?.poNumber}
+            disabled={pending}
+          />
+        </div>
+        <div className="flex flex-1 flex-col gap-1.5">
+          <Label htmlFor={fieldId("costCentre")}>Cost centre</Label>
+          <Input
+            id={fieldId("costCentre")}
+            name="costCentre"
+            defaultValue={asset?.costCentre}
+            disabled={pending}
+          />
+        </div>
+      </div>
+
+      <div className="flex gap-3">
+        <div className="flex flex-1 flex-col gap-1.5">
+          <Label htmlFor={fieldId("department")}>Department</Label>
+          <Input
+            id={fieldId("department")}
+            name="department"
+            defaultValue={asset?.department}
+            disabled={pending}
+          />
+        </div>
+        {/* Free text WITHIN a site — the desk or room — not a second site
+            picker. The export's Location column feeds Site.name (AM-04-C17);
+            this is the finer-grained place under it. */}
+        <div className="flex flex-1 flex-col gap-1.5">
+          <Label htmlFor={fieldId("location")}>Location</Label>
+          <Input
+            id={fieldId("location")}
+            name="location"
+            defaultValue={asset?.location}
             disabled={pending}
           />
         </div>

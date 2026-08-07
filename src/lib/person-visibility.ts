@@ -24,6 +24,12 @@ import { Role, type Prisma } from "@prisma/client";
  *     user's `deactivatedAt`. No PII field, and the row never leaves the
  *     function. Note it is `tx.person.findUnique`, which the first grep shape
  *     alone does not find — hence the second.
+ *   - `src/lib/asset-import.ts` (AM-04's holder resolver) — a
+ *     `db.person.findMany` using `PERSON_NAME_SELECT` below, so it is this
+ *     module's own projection rather than a competing one. It loads id+name for
+ *     every person once per import run, in memory, to match legacy `Assigned to`
+ *     names; nothing is rendered to any reader. Listed because the grep finds
+ *     it and an unexplained hit is exactly what this list exists to prevent.
  *
  * Any OTHER hit selecting a Person field is a bug.
  *

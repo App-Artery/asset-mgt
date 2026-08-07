@@ -44,13 +44,16 @@ describe("assetSearchWhere", () => {
     expect(JSON.stringify(where)).not.toContain("contains");
   });
 
-  it("searches tag, serial, make, model and category name for a real term", () => {
+  it("searches tag, serial, make, model, description and category name", () => {
     expect(assetSearchWhere("ThinkPad")).toEqual({
       OR: [
         { tag: { contains: "ThinkPad", mode: "insensitive" } },
         { serial: { contains: "ThinkPad", mode: "insensitive" } },
         { make: { contains: "ThinkPad", mode: "insensitive" } },
         { model: { contains: "ThinkPad", mode: "insensitive" } },
+        // AM-04: the only name an imported asset has, since the export leaves
+        // Brand and Model blank on every row.
+        { description: { contains: "ThinkPad", mode: "insensitive" } },
         { category: { name: { contains: "ThinkPad", mode: "insensitive" } } },
       ],
     });
@@ -68,7 +71,7 @@ describe("assetSearchWhere", () => {
   // clause for a given string is the same object for every reader. There is no
   // role parameter to vary it with, and this asserts the consequence rather
   // than the signature.
-  it("mentions no field outside the five asset attributes", () => {
+  it("mentions no field outside the six asset attributes", () => {
     const serialised = JSON.stringify(assetSearchWhere("grace"));
     for (const forbidden of [
       "person",

@@ -46,6 +46,27 @@ yarn-error.log*
 # may ever be committed
 seed-data/
 
+# real client exports (Kenya DPA). The Asset Tiger export carries staff names,
+# serials, PO numbers and cost centres — it is the client's live asset data and
+# must never enter git history, where it cannot be un-committed. Unlike
+# seed-data/ these land in docs/, a committed directory, so a stray
+# `git add docs/` would take them.
+#
+# REPO-WIDE BY EXTENSION, NOT BY DIRECTORY, and that distinction is the whole
+# point. The first version of this rule was `docs/*.xlsx` — a pattern containing
+# a slash, which git anchors to this file's directory, so it matched
+# docs/export.xlsx and NOT docs/features/AM-04/export.xlsx. AM-04 creates
+# docs/features/AM-04/, and parking a copy of the export beside its design doc
+# is exactly the plausible mistake. A depth-enumerated glob that reads as
+# repo-wide is the failure class; verified with `git check-ignore -v`.
+#
+# The negation keeps the synthetic examples committable — they are the fixtures
+# the real files must never become (same rule as scripts/staff.example.csv).
+*.xlsx
+*.xls
+*.csv
+!*.example.csv
+
 # vercel
 .vercel
 

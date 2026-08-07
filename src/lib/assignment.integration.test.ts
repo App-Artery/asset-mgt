@@ -35,6 +35,7 @@ import {
   transitionAssetStatus,
 } from "@/lib/asset-admin";
 import { IllegalTransitionError } from "@/lib/asset-lifecycle";
+import { importAssetWithEvent } from "@/lib/asset-import";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 
@@ -76,6 +77,7 @@ describe.skipIf(!testDatabaseUrl)("assignment and returns (real DB)", () => {
       categoryId,
       make: "Dell",
       model: "Latitude 5450",
+      description: null,
       serial: null,
       purchasedAt: null,
       purchasePrice: null,
@@ -83,6 +85,10 @@ describe.skipIf(!testDatabaseUrl)("assignment and returns (real DB)", () => {
       warrantyUntil: null,
       condition: AssetCondition.NEW,
       siteId: null,
+      poNumber: null,
+      costCentre: null,
+      department: null,
+      location: null,
       status: AssetStatus.IN_STOCK,
       actorId,
     });
@@ -698,6 +704,81 @@ describe.skipIf(!testDatabaseUrl)("assignment and returns (real DB)", () => {
         actorId,
       });
       expect(assigned.status).toBe(AssetStatus.ASSIGNED);
+    });
+  });
+
+  // AM-04-CF-B. The import is a SECOND write path that can strand an asset in
+  // exactly the way the reconciliation assertion below detects, and that
+  // assertion is scoped to this file's category — so an import test living in
+  // its own file would be outside it. These run HERE, against this category, so
+  // the invariant covers the import path rather than silently narrowing to the
+  // paths that happened to exist when it was written.
+  describe("import write path", () => {
+    it("leaves an imported ASSIGNED asset reconcilable", async () => {
+      const person = await db.person.create({
+        data: {
+          name: `Imported Holder ${randomUUID().slice(0, 8)}`,
+          email: null,
+        },
+      });
+      const { assetId, assignmentId } = await db.$transaction((tx) =>
+        importAssetWithEvent(tx, {
+          tag: uniqueTag(),
+          categoryId,
+          siteId: null,
+          status: AssetStatus.ASSIGNED,
+          description: "Imported dock",
+          make: null,
+          model: null,
+          serial: null,
+          supplier: null,
+          purchasedAt: new Date("2023-09-08T00:00:00.000Z"),
+          purchasePrice: null,
+          poNumber: null,
+          costCentre: null,
+          department: null,
+          location: null,
+          holder: {
+            personId: person.id,
+            checkedOutAt: new Date("2023-10-01T09:00:00.000Z"),
+          },
+        }),
+      );
+
+      expect(assignmentId).not.toBeNull();
+      const asset = await db.asset.findUniqueOrThrow({
+        where: { id: assetId },
+      });
+      expect(asset.status).toBe(AssetStatus.ASSIGNED);
+    });
+
+    it("leaves an imported unheld asset reconcilable", async () => {
+      const { assetId, assignmentId } = await db.$transaction((tx) =>
+        importAssetWithEvent(tx, {
+          tag: uniqueTag(),
+          categoryId,
+          siteId: null,
+          status: AssetStatus.IN_STOCK,
+          description: "Imported spare",
+          make: null,
+          model: null,
+          serial: null,
+          supplier: null,
+          purchasedAt: null,
+          purchasePrice: null,
+          poNumber: null,
+          costCentre: null,
+          department: null,
+          location: null,
+          holder: null,
+        }),
+      );
+
+      expect(assignmentId).toBeNull();
+      const asset = await db.asset.findUniqueOrThrow({
+        where: { id: assetId },
+      });
+      expect(asset.status).toBe(AssetStatus.IN_STOCK);
     });
   });
 

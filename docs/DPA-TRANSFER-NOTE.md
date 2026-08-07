@@ -57,6 +57,51 @@ Nothing about sign-in activity is written to the append-only `UserEvent`
 table, where it would be permanently uncorrectable and unerasable.
 Engineering change of 2026-08-02 (issue #11); no legal review is implied.
 
+**Data subjects widen at the Asset Tiger migration (AM-04).** Recorded here
+because the trigger clause below fires — **not** because the fields, the
+purpose, the location or the processors change. They do not: this is the same
+`Person` record, in the same database, for the same purpose. What changes is
+**whose**.
+
+Until now every `Person` was provisioned deliberately by an IT admin, so the
+population was current staff with accounts. The migration imports the client's
+legacy register, and its `Assigned to` column names **everyone who has ever
+held equipment** — including **leavers**, contractors, and people who never had
+a login and never will. Those records are created by a script from a
+spreadsheet rather than by a person typing them, which is precisely why it is
+worth stating: nobody reviews them one by one at the moment of creation.
+
+Three consequences follow, and each is a deliberate design decision:
+
+- **Imported holders carry a name only.** `Person.email` became optional in
+  this story and imported records leave it null; `employeeRef` is null too, as
+  the export has no such column. This is the narrowest record the register can
+  hold for someone — a name and what they held — and it is narrower than the
+  provisioned-staff record described above. **No email is ever synthesized**
+  for them: fabricating a contact address for a leaver would create a personal
+  datum the client never held, and it could not be distinguished from a real
+  one afterwards.
+- **A name is never matched approximately.** Exactly one existing match links;
+  none creates a new record; **two or more refuses and the row is quarantined
+  for a human**. A wrong match would attribute one person's equipment to
+  another, and because `Assignment` is write-once and `AssetEvent` append-only,
+  the only available correction is a fabricated return.
+- **No name enters an append-only table.** The person link is
+  `AssetEvent.assignmentId` → `Assignment.personId` — one copy, joinable — so a
+  correction or an erasure request remains honourable. The export's
+  `Created by` column, which is a third person's name, is **not imported at
+  all**, including into `ImportBatch.report`.
+
+**Retention consequence to flag to the client:** the register will hold records
+for former staff for as long as it holds their equipment history, which is the
+point of an audit trail and is also a retention question only the client can
+answer. Nothing in this codebase deletes; deactivation is a flag. If a
+retention period is required for leavers, it needs a deliberate mechanism and
+this note should be revisited before one is built.
+
+Engineering change of 2026-08-07 (AM-04, advisor condition C11); no legal
+review is implied.
+
 ## Where it is processed
 
 | Processor | Role                                       | Location                                 |

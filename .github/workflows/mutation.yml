@@ -9,32 +9,47 @@
 #
 # It therefore runs:
 #   - weekly, so the number does not silently rot;
-#   - on pull requests that touch a mutated module, its tests, or this config —
-#     the moment a guard is being written or edited is exactly when the
-#     falsifiability question is live;
-#   - on demand.
+#   - on demand (`gh workflow run "Mutation testing"`, or the Actions tab).
 #
-# It CAN fail: `thresholds.break` in stryker.config.mjs is a hard gate, so a PR
-# that adds a guard nothing can falsify goes red here even though `ci` is green.
-# Keep the `paths` list below in sync with `mutate` in stryker.config.mjs.
+# NO PULL-REQUEST TRIGGER, changed 2026-08-07 (AM-04). It used to run on PRs
+# touching a mutated module, on the reasoning that the moment a guard is being
+# written is when the falsifiability question is live. That reasoning is still
+# right, and the trigger was removed anyway, for a reason worth writing down:
+# AM-04 added four modules to `mutate`, which took the run from ~13 minutes to
+# ~29, and a job of that length attached to every push became something a human
+# had to WATCH AND CANCEL. A check people cancel is worse than no check — it
+# burns runner minutes, it trains everyone to dismiss a red mark, and the one
+# time it was reporting something real nobody would look.
+#
+# WHAT THIS COSTS, stated plainly rather than discovered later: a PR that adds a
+# guard nothing can falsify is no longer caught before merge. The primary
+# defence is unchanged and was always the real one — every guard a condition
+# names is red-proved BY HAND, by deleting the production line it defends and
+# watching a named test fail. Mutation testing is the backstop that finds the
+# guards nobody thought to hand-prove, and it is now a weekly backstop rather
+# than a per-PR one. On AM-04 it earned that role: it found two real bugs in
+# code that already had 21 hand red-proofs.
+#
+# Run it deliberately when writing or editing a guard. `pnpm test:mutation`
+# locally, scoped with `--mutate src/lib/<file>.ts`, is the fast loop; the full
+# sweep belongs to the schedule.
+#
+# It CAN still fail: `thresholds.break` in stryker.config.mjs is a hard gate.
+# A red WEEKLY run is now the signal, and a weekly run that stays red is not a
+# tolerable steady state — it is the thing that makes the next real regression
+# invisible. Fix it or change the threshold deliberately; do not let it sit.
+#
+# `mutate` in stryker.config.mjs is now the single source of truth for scope.
+# There is no `paths` list here to keep in sync with it — which also removes the
+# drift that had already happened once: AM-04's four modules were added to
+# `mutate` and not to `paths`, and the job only kept firing because the new
+# tests matched a neighbouring `src/lib/*.test.ts` glob.
 name: Mutation testing
 
 on:
   schedule:
     # Mondays 02:30 UTC — before the working week, after the nightly backup.
     - cron: "30 2 * * 1"
-  pull_request:
-    paths:
-      - "src/lib/asset-lifecycle.ts"
-      - "src/lib/person-visibility.ts"
-      - "src/lib/asset-admin.ts"
-      - "src/lib/sign-in-policy.ts"
-      - "src/components/confirm-action-dialog.tsx"
-      - "src/lib/*.test.ts"
-      - "src/lib/*.integration.test.ts"
-      - "src/components/confirm-action-dialog.test.tsx"
-      - "stryker.config.mjs"
-      - ".github/workflows/mutation.yml"
   workflow_dispatch:
 
 permissions:

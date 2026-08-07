@@ -22,7 +22,14 @@ const assignmentSelect = {
   returnedAt: true,
   conditionNotes: true,
   asset: {
-    select: { id: true, tag: true, make: true, model: true, status: true },
+    select: {
+      id: true,
+      tag: true,
+      make: true,
+      model: true,
+      description: true,
+      status: true,
+    },
   },
 } satisfies Prisma.AssignmentSelect;
 

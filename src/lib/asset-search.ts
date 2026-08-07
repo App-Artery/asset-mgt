@@ -5,7 +5,8 @@ import type { Prisma } from "@prisma/client";
  * THE register search predicate (AM-07, issue #7).
  *
  * `assetSearchWhere(q)` takes a string and returns a clause over ASSET
- * ATTRIBUTES — tag, serial, make, model, and the category's name. Nothing else.
+ * ATTRIBUTES — tag, serial, make, model, description, and the category's name.
+ * Nothing else.
  * It has no `Role` parameter, and that absence is the whole security design of
  * this feature: a signature rather than a comment.
  *
@@ -96,14 +97,23 @@ export function assetSearchWhere(q: string): Prisma.AssetWhereInput {
   // the branch drops the row. Measured against real Postgres, a lone
   // `{ tag: { contains: "" } }` does exclude an untagged asset.
   //
-  // The OR above happens to mask that: `make` and `model` are non-nullable, so
-  // their branches match every row and untagged assets survive anyway. That is
-  // a coincidence of the current column list, not a property of the design —
-  // narrow the OR to the two nullable columns and an empty search would start
-  // silently hiding exactly the assets nobody has tagged yet. Returning `{}`
-  // does not depend on which columns are listed.
+  // The OR below happens to mask that, and AM-04 MOVED WHICH COLUMN DOES THE
+  // MASKING. This comment previously said `make` and `model` are non-nullable
+  // so their branches match every row; both became nullable in the AM-04
+  // migration, and that sentence is now false. The masking did not disappear —
+  // it moved to `category.name`, which is non-nullable behind a required FK, so
+  // its branch still matches every row and untagged assets still survive.
   //
-  // It is also five ILIKEs and a LEFT JOIN onto Category to express "no
+  // Which is exactly why this guard IS NOT RESULT-SET-FALSIFIABLE, and why no
+  // test in this repo claims to red-prove it (advisor condition AM-04-C26).
+  // Delete the `return {}` and every assertion still passes, because the
+  // Category branch produces the same rows. Writing a test that appears to
+  // prove it would be worse than having none: it would report green for a
+  // guard it never exercised. What defends it is this comment plus the review
+  // rule above — narrow the OR to nullable columns only and an empty search
+  // would start silently hiding exactly the assets nobody has tagged yet.
+  //
+  // It is also six ILIKEs and a LEFT JOIN onto Category to express "no
   // filter", which the planner cannot simplify away.
   if (contains === "") return {};
 
@@ -121,6 +131,22 @@ export function assetSearchWhere(q: string): Prisma.AssetWhereInput {
       { serial: { contains, mode: "insensitive" } },
       { make: { contains, mode: "insensitive" } },
       { model: { contains, mode: "insensitive" } },
+      // AM-04. WITHOUT THIS BRANCH `?q=` SILENTLY DIES AT CUTOVER: the Asset
+      // Tiger export leaves Brand and Model blank on every row, so an imported
+      // register of ~400 assets would be searchable by tag and serial and by
+      // nothing a human remembers. `description` is the only name those rows
+      // have.
+      //
+      // It is an ASSET ATTRIBUTE, so it belongs here and the no-role-parameter
+      // rule above is untouched. The sharp edge, named rather than left for a
+      // reader to find: `description` is legacy free text and "Lindah's laptop"
+      // is a normal thing to find in an asset register — which would make a
+      // staff name findable by every role, the bypass this module exists to
+      // prevent. It is bounded and `AssetEvent.notes` is not: description is
+      // correctable through `updateAssetWithEvent`, notes is append-only. The
+      // import's own scan for staff names in this column is what makes the
+      // problem visible rather than theoretical.
+      { description: { contains, mode: "insensitive" } },
       { category: { name: { contains, mode: "insensitive" } } },
     ],
   };

@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { assetDisplayName } from "@/lib/asset-display";
 import { requireRole } from "@/lib/authz";
 import { getDb } from "@/lib/db";
 import { AssetTagLink } from "@/components/asset-tag-link";
@@ -40,7 +41,14 @@ const assignmentSelect = {
   checkedOutAt: true,
   returnedAt: true,
   asset: {
-    select: { id: true, tag: true, make: true, model: true, status: true },
+    select: {
+      id: true,
+      tag: true,
+      make: true,
+      model: true,
+      description: true,
+      status: true,
+    },
   },
 } satisfies Prisma.AssignmentSelect;
 
@@ -135,7 +143,7 @@ export default async function MyAssignmentsPage() {
                         />
                       </TableCell>
                       <TableCell>
-                        {assignment.asset.make} {assignment.asset.model}
+                        {assetDisplayName(assignment.asset)}
                       </TableCell>
                       <TableCell>
                         <StatusChip status={assignment.asset.status} />
@@ -192,7 +200,7 @@ export default async function MyAssignmentsPage() {
                           />
                         </TableCell>
                         <TableCell>
-                          {assignment.asset.make} {assignment.asset.model}
+                          {assetDisplayName(assignment.asset)}
                         </TableCell>
                         <TableCell>
                           <StatusChip status={assignment.asset.status} />

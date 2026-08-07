@@ -782,6 +782,8 @@ describe.skipIf(!testDatabaseUrl)("asset register page (real DB)", () => {
     let heldId: string;
     let notedId: string;
     let dockId: string;
+    /** The AM-04 shape: no make, no model, identity in `description` alone. */
+    let importedId: string;
     /** Every fixture asset below, which is what a `${prefix}` search returns. */
     let allIds: string[];
 
@@ -810,7 +812,7 @@ describe.skipIf(!testDatabaseUrl)("asset register page (real DB)", () => {
       // One asset per searchable field, so a hit names the field it came from.
       // Distinct tag stems (LAPTOP/DESK/REPAIR/DOCK) rather than a shared
       // numbering, so a partial-tag search can single one out.
-      const [laptop, held, noted, dock] = await Promise.all([
+      const [laptop, held, noted, dock, imported] = await Promise.all([
         db.asset.create({
           data: {
             categoryId: searchCategoryId,
@@ -854,12 +856,31 @@ describe.skipIf(!testDatabaseUrl)("asset register page (real DB)", () => {
             status: AssetStatus.IN_STOCK,
           },
         }),
+        // AM-04's imported shape, and the POSITIVE CONTROL for the notes test
+        // below (advisor condition AM-04-C25). Make and model are NULL exactly
+        // as the client's Asset Tiger rows arrive, and the whole identity is in
+        // `description` — which carries the SAME nonce as the event note. That
+        // pairing is the point: without it, "searching the nonce returns
+        // nothing" would pass just as well if the search were broken outright,
+        // or if `description` were never reached at all.
+        db.asset.create({
+          data: {
+            categoryId: searchCategoryId,
+            siteId: searchSiteId,
+            tag: `${prefix}-IMPORT05`,
+            make: null,
+            model: null,
+            description: `HP USB-C G5 Essential Docking Station ${noteNonce}`,
+            status: AssetStatus.IN_STOCK,
+          },
+        }),
       ]);
       laptopId = laptop.id;
       heldId = held.id;
       notedId = noted.id;
       dockId = dock.id;
-      allIds = [laptopId, heldId, notedId, dockId];
+      importedId = imported.id;
+      allIds = [laptopId, heldId, notedId, dockId, importedId];
 
       // A real open holder record for the role-symmetry test. Its name token is
       // deliberately NOT the asset token: searching it must be a statement
@@ -1031,8 +1052,14 @@ describe.skipIf(!testDatabaseUrl)("asset register page (real DB)", () => {
           q: noteNonce,
           siteId: searchSiteId,
         });
-        expect(assetIdsIn(html), `as ${role}`).toEqual([]);
-        expect(html).toContain("No assets match");
+        // THE POSITIVE CONTROL (AM-04-C25). The nonce sits in TWO places: an
+        // event note, which must never be reached, and an imported asset's
+        // `description`, which must be. Asserting the imported asset comes
+        // back — rather than asserting nothing does — is what makes this test
+        // fail if `?q=` breaks entirely or if the description branch is
+        // dropped. Against a bare `toEqual([])` both of those bugs are green.
+        expect(assetIdsIn(html), `as ${role}`).toEqual([importedId]);
+        expect(html).not.toContain(notedId);
       }
 
       // …while the asset carrying that note is otherwise perfectly findable,
@@ -1046,6 +1073,51 @@ describe.skipIf(!testDatabaseUrl)("asset register page (real DB)", () => {
           }),
         ),
       ).toEqual([notedId]);
+    });
+
+    it("finds an imported asset by description, with no make or model", async () => {
+      // AM-04-C25 head-on. Every row in the client's Asset Tiger export has a
+      // blank Brand and Model, so without a `description` branch a register of
+      // ~400 imported assets would be searchable by tag and serial and by
+      // nothing a human actually remembers about the kit.
+      //
+      // The fixture really is in the imported shape — asserted rather than
+      // assumed, because if a later change gave it a make, this test would
+      // start passing through the `make` branch and stop testing anything.
+      const imported = await db.asset.findUniqueOrThrow({
+        where: { id: importedId },
+        select: { make: true, model: true, description: true },
+      });
+      expect(imported.make).toBeNull();
+      expect(imported.model).toBeNull();
+
+      // Every role, same result: `description` is an asset attribute, so it
+      // carries no role-dependent behaviour (see the asset-search docblock).
+      for (const role of [
+        Role.STAFF_RO,
+        Role.PROCUREMENT,
+        Role.FINANCE,
+        Role.ADMIN_IT,
+      ]) {
+        await signInAs(role);
+        const html = await renderRegister({
+          q: "Essential Docking",
+          siteId: searchSiteId,
+        });
+        expect(assetIdsIn(html), `as ${role}`).toEqual([importedId]);
+      }
+    });
+
+    it("names an imported asset by its description, not a blank", async () => {
+      // The display half of the same problem. Seven render sites used to print
+      // `{make} {model}` directly; for an imported row that is two nulls, and
+      // the register would list ~400 assets each labelled with nothing.
+      await signInAs(Role.STAFF_RO);
+      const html = await renderRegister({
+        q: "Essential Docking",
+        siteId: searchSiteId,
+      });
+      expect(html).toContain("HP USB-C G5 Essential Docking Station");
     });
 
     it("opens the asset itself on an exact tag match", async () => {
