@@ -310,8 +310,13 @@ export async function runImport(
           });
 
           if (existing) {
+            // No `?? null` on either side: every CONFLICT_FIELDS entry is
+            // `string | null` on MappedRow AND on the Prisma select above, so
+            // neither can be `undefined` and both coalesces were dead code.
+            // Dead code beats an ignore directive — an unreachable branch reads
+            // as "a nullish case exists here" to the next person.
             const changed = CONFLICT_FIELDS.filter(
-              (field) => (existing[field] ?? null) !== (row[field] ?? null),
+              (field) => existing[field] !== row[field],
             );
             outcomes.push(
               changed.length === 0

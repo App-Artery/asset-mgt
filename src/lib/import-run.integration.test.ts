@@ -179,6 +179,132 @@ describe.skipIf(!testDatabaseUrl)("import run (real DB)", () => {
       expect(asset.description).toBe("HP USB-C G5 Essential Docking Station");
     });
 
+    // ONE FIELD PER CASE, all nine. The suite previously exercised only
+    // `description`, which left the StringLiteral mutant on every other entry
+    // of CONFLICT_FIELDS unfalsifiable: delete `serial` from the array and a
+    // changed serial reports as SKIPPED, the admin is never told the source
+    // disagrees, and C20's promise quietly stops holding for that column.
+    //
+    // The cell header differs from the model field for most of them, which is
+    // itself worth pinning — this is the mapping the export actually uses.
+    it.each([
+      ["description", "Description", "A different description"],
+      ["make", "Brand", "Lenovo"],
+      ["model", "Model", "ThinkPad X1"],
+      ["serial", "Serial No", "CHANGED-SERIAL"],
+      ["supplier", "Purchased from", "A different supplier"],
+      ["poNumber", "P.O Number", "PO-CHANGED"],
+      ["costCentre", "CC", "CC9999"],
+      ["department", "Department", "A different department"],
+      ["location", "Location", "A different location"],
+    ])("reports a changed %s as a conflict", async (field, header, value) => {
+      const row = cells();
+      await commit(sheetOf([row]));
+
+      const result = await commit(sheetOf([{ ...row, [header]: value }]));
+
+      expect(result.report.conflicted).toBe(1);
+      const conflict = result.report.outcomes.find(
+        (outcome) => outcome.kind === "conflict",
+      );
+      expect(conflict?.kind === "conflict" && conflict.fields).toContain(field);
+      // Insert-only: reported, never written.
+      const asset = await db.asset.findUniqueOrThrow({
+        where: { tag: String(row["Asset Tag ID"]) },
+      });
+      expect(asset[field as keyof typeof asset]).not.toBe(value);
+    });
+
+    // THE SECOND ONE-WAY DOOR, and it had no test at all. Reference rows are
+    // renamed but never removed and a rename CANNOT MERGE, so importing
+    // "Docking Station" and "DOCKING STATION" as two categories splits the
+    // register permanently.
+    //
+    // The guard is `.trim().toLowerCase()` at three sites — the resolveReference
+    // key and both cache builders. Every fixture in this file used
+    // `Cat ${stem()}` with stem() returning uppercase hex, so NO fixture varied
+    // case or whitespace and all six mutants survived. That is the AM-02
+    // recurrence the learnings name: a `.trim()` whose only whitespace test was
+    // pre-trimmed a layer up.
+    it("folds case and whitespace when matching Category and Site", async () => {
+      const category = `Docking Station ${stem()}`;
+      const site = `Nairobi Office ${stem()}`;
+
+      const result = await commit(
+        sheetOf([
+          cells({ Category: category, Location: site }),
+          // Same two names to a human, and the only difference the guard sees.
+          cells({
+            Category: `  ${category.toUpperCase()}  `,
+            Location: `  ${site.toLowerCase()}  `,
+          }),
+        ]),
+      );
+
+      expect(result.report.imported).toBe(2);
+      // ONE row each, not two. This is the assertion the whole guard exists for.
+      expect(
+        await db.category.count({
+          where: { name: { equals: category, mode: "insensitive" } },
+        }),
+      ).toBe(1);
+      expect(
+        await db.site.count({
+          where: { name: { equals: site, mode: "insensitive" } },
+        }),
+      ).toBe(1);
+      // The census reports ONE creation, not two — the operator signs off a
+      // list of what will be created, and a doubled entry there is the visible
+      // symptom of this bug.
+      expect(result.report.newCategories).toHaveLength(1);
+      expect(result.report.newSites).toHaveLength(1);
+    });
+
+    // The cache builders trim what they read OUT of the database, which is a
+    // different guard from trimming the incoming cell — and it survived the
+    // test above because every write path we control already trims (the
+    // mapper's blankToNull, the admin action, the seed script), so no stored
+    // name carries whitespace today.
+    //
+    // It is kept rather than deleted as dead code, deliberately. It defends a
+    // ONE-WAY DOOR: reference rows are renamed but never removed and a rename
+    // cannot merge, so a single untrimmed stored name — from a future write
+    // path, a migration, or direct SQL — would split a category permanently.
+    // Deleting defensive normalisation on that path to satisfy a mutation score
+    // is the wrong trade. This makes it falsifiable instead.
+    it("matches a stored reference name that carries whitespace", async () => {
+      const category = `Legacy Padded ${stem()}`;
+      // However it got there — this is the state, not the route to it.
+      await db.category.create({ data: { name: `  ${category}  ` } });
+
+      const result = await commit(sheetOf([cells({ Category: category })]));
+
+      expect(result.report.imported).toBe(1);
+      // Matched the existing row rather than creating a second one.
+      expect(result.report.newCategories).toEqual([]);
+      expect(
+        await db.category.count({
+          where: { name: { contains: category } },
+        }),
+      ).toBe(1);
+    });
+
+    // The COMMIT path through the reference cache, which the dry-run test
+    // cannot reach: `cells()` mints a fresh category per call, so
+    // `sheetOf([cells(), cells()])` is two distinct categories and `if (hit)`
+    // is never taken on a committing run.
+    it("reuses a category it created earlier in the same commit run", async () => {
+      const category = `Shared Commit Cat ${stem()}`;
+
+      const result = await commit(
+        sheetOf([cells({ Category: category }), cells({ Category: category })]),
+      );
+
+      expect(result.report.imported).toBe(2);
+      expect(await db.category.count({ where: { name: category } })).toBe(1);
+      expect(result.report.newCategories).toEqual([category]);
+    });
+
     it("imports a legacy ASSIGNED row with its holder", async () => {
       const holder = `Legacy Holder ${stem()}`;
       const result = await commit(
