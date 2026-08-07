@@ -68,7 +68,17 @@ function packageScriptConditions(): string[] {
  */
 function runCli(
   args: string[],
-  options: { conditions?: string[]; databaseUrl?: string } = {},
+  options: {
+    conditions?: string[];
+    /**
+     * Environment overrides. A key set to `undefined` is DELETED rather than
+     * set to "" — the difference matters, because the developer's own
+     * DIRECT_DATABASE_URL would otherwise leak in from the shell and the
+     * "unset" tests would silently stop testing anything. Same reasoning as
+     * `runGuard` in migrate-if-production.test.ts.
+     */
+    env?: Record<string, string | undefined>;
+  } = {},
 ): Run {
   const conditions = options.conditions ?? packageScriptConditions();
   const tsxArgs = [
@@ -78,15 +88,20 @@ function runCli(
     SCRIPT,
     ...args,
   ];
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    DIRECT_DATABASE_URL: testDatabaseUrl,
+    ...options.env,
+  };
+  for (const [key, value] of Object.entries(options.env ?? {})) {
+    if (value === undefined) delete env[key];
+  }
   try {
     const stdout = execFileSync("pnpm", tsxArgs, {
       cwd: REPO_ROOT,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        DIRECT_DATABASE_URL: options.databaseUrl ?? testDatabaseUrl ?? "",
-      },
+      env,
     });
     return { status: 0, stdout, stderr: "" };
   } catch (error) {
@@ -183,6 +198,36 @@ describe.skipIf(!testDatabaseUrl)(
 
       expect(run.status).not.toBe(0);
       expect(`${run.stderr}${run.stdout}`).toContain("Usage:");
+    });
+
+    // Copilot review, PR #36. This used to print a warning and carry on, which
+    // is incoherent with its own reasoning: if a pooled connection makes the run
+    // lock unreliable, a warning is not a mitigation — the operator has already
+    // typed the command and is watching rows scroll past. It refuses now.
+    it("REFUSES to commit without an unpooled connection", () => {
+      const run = runCli([workbook, "--commit", "--batch=whatever"], {
+        // Pooled-looking: DIRECT_DATABASE_URL genuinely absent (deleted, not
+        // blanked), DATABASE_URL present so the run has somewhere to connect.
+        env: { DIRECT_DATABASE_URL: undefined, DATABASE_URL: testDatabaseUrl },
+      });
+
+      expect(run.status).not.toBe(0);
+      expect(`${run.stderr}${run.stdout}`).toContain(
+        "requires DIRECT_DATABASE_URL",
+      );
+      // It stopped BEFORE looking the batch up — nothing was read or written.
+      expect(`${run.stderr}${run.stdout}`).not.toContain("No import batch");
+    });
+
+    // A dry run is deliberately NOT subject to that rule: it takes the lock too,
+    // but nothing it writes survives, so a lost lock cannot leave duplicates.
+    it("still allows a DRY RUN on a pooled connection", () => {
+      const run = runCli([workbook], {
+        env: { DIRECT_DATABASE_URL: undefined, DATABASE_URL: testDatabaseUrl },
+      });
+
+      expect(run.status).toBe(0);
+      expect(run.stdout).toContain("DRY RUN");
     });
 
     // AM-04-C21 end to end, through the real entry point: a dry run's batch id

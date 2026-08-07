@@ -172,21 +172,35 @@ export function formatReport(result: DryRunResult, commit: boolean): string {
 
 async function main(argv: string[]): Promise<number> {
   const args = parseArgs(argv);
+  // `||`, not `??`. An empty DIRECT_DATABASE_URL — which is what an unset
+  // variable looks like in a shell that exports it anyway, and what a blank
+  // line in a .env file produces — is NOT a connection string, but `??` only
+  // falls through on null/undefined, so it would be accepted and then fail
+  // with an opaque Prisma error instead of falling back to DATABASE_URL.
   const databaseUrl =
-    process.env.DIRECT_DATABASE_URL ?? process.env.DATABASE_URL;
+    process.env.DIRECT_DATABASE_URL || process.env.DATABASE_URL;
   if (!databaseUrl) {
     throw new Error(
       "DIRECT_DATABASE_URL (preferred, unpooled) or DATABASE_URL must be set",
     );
   }
   if (args.commit && !process.env.DIRECT_DATABASE_URL) {
-    // Loud rather than subtle: a session advisory lock on a pooled connection
-    // may be released onto a different backend, which silently removes the only
-    // thing stopping two concurrent runs from each creating their own copy of
-    // one person.
-    console.warn(
-      "WARNING: committing without DIRECT_DATABASE_URL. The run lock needs an\n" +
-        "unpooled connection; a pooled URL makes it unreliable.\n",
+    // REFUSES, rather than warning. The earlier version printed a warning and
+    // carried on, which is incoherent with its own reasoning: a session
+    // advisory lock taken on a pooled connection may be released onto a
+    // different backend, and that lock is the only thing stopping two
+    // concurrent runs from each creating their own copy of one person. If that
+    // is true, a warning is not a mitigation — the operator has already typed
+    // the command and is watching ~400 rows scroll past.
+    //
+    // A dry run is unaffected: it takes the lock too, but nothing it writes
+    // survives, so a lost lock cannot leave duplicates behind.
+    throw new Error(
+      "--commit requires DIRECT_DATABASE_URL (an UNPOOLED connection).\n" +
+        "The run holds a session-scoped advisory lock across every row's\n" +
+        "transaction; on a pooled connection that lock may be released onto a\n" +
+        "different backend, and two concurrent runs would each create their own\n" +
+        "copy of every imported person.",
     );
   }
 
@@ -216,37 +230,62 @@ async function main(argv: string[]): Promise<number> {
       const sourceSha256 = hashSource(sourceBytes);
       const rowsHash = hashRows(sheet);
       if (batch.sourceSha256 !== sourceSha256 || batch.rowsHash !== rowsHash) {
+        // BOTH hashes are reported, because they fail for different reasons and
+        // the message has to say which. A differing sourceSha256 with a
+        // matching rowsHash means the file was rewritten but its data did not
+        // change — resaved by Excel, restyled — which is a very different
+        // conversation from the reverse, where the bytes are equal but the
+        // parsed rows are not. Printing only the SHA left the second case
+        // reporting an identical-looking pair of digests.
         throw new Error(
           `The file has changed since batch ${args.batchId} was reviewed.\n` +
-            `  expected sha256 ${batch.sourceSha256}\n` +
-            `  actual   sha256 ${sourceSha256}\n` +
+            `  sha256  expected ${batch.sourceSha256}\n` +
+            `          actual   ${sourceSha256}\n` +
+            `  rows    expected ${batch.rowsHash}\n` +
+            `          actual   ${rowsHash}\n` +
             "Re-run the dry run and sign off the new report.",
         );
       }
     }
 
-    const result = await runImport(db, sheet, sourceBytes, {
-      commit: args.commit,
-    });
-
-    // The batch row is written once at run start and updated exactly once at
-    // run end (AM-04-C5). Written here, after the run, because a CLI that dies
-    // mid-run leaves no half-open batch to interpret — and the report is the
-    // only thing that makes the row useful.
+    // WRITTEN AT RUN START, updated exactly once at run end — the lifecycle
+    // AM-04-C5 states and the schema docblock describes. The first version
+    // created the row after `runImport` returned, which contradicted both and
+    // was wrong on its own terms: a commit run imports ~400 rows in ~400
+    // separate transactions, so a crash half way through leaves N assets
+    // written and NO record that a run ever happened. The operator's first
+    // question after a failed cutover is "what did it do", and the answer was
+    // "nothing is recorded, count the assets yourself".
+    //
+    // A row with `finishedAt: null` IS the durable evidence of a crashed run.
+    // The counts default to 0 and `report` is nullable precisely so this row
+    // can exist before either is known.
     const batch = await db.importBatch.create({
       data: {
         source: args.file,
         dryRun: !args.commit,
+        sourceSha256: hashSource(sourceBytes),
+        rowsHash: hashRows(sheet),
+      },
+      select: { id: true },
+    });
+
+    const result = await runImport(db, sheet, sourceBytes, {
+      commit: args.commit,
+    });
+
+    // The one permitted update, and the only one anywhere: nothing else in this
+    // codebase may write to an ImportBatch row.
+    await db.importBatch.update({
+      where: { id: batch.id },
+      data: {
         finishedAt: new Date(),
         rowsOk: result.report.imported,
         rowsFailed: result.report.quarantined,
         // No personal data (AM-04-C6) — this is the persisted artefact, and the
-        // named sign-off list above is not part of it.
+        // named sign-off list printed below is not part of it.
         report: result.report,
-        sourceSha256: result.sourceSha256,
-        rowsHash: result.rowsHash,
       },
-      select: { id: true },
     });
 
     console.log(formatReport(result, args.commit));
