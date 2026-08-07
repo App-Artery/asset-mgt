@@ -93,17 +93,35 @@ describe.skipIf(!testDatabaseUrl)("migrate-if-production.sh (real DB)", () => {
       datasourceUrl: urlFor(testDatabaseUrl!, "postgres"),
     });
     for (const db of [SANDBOX_DB, OTHER_DB]) {
-      await admin.$executeRawUnsafe(`DROP DATABASE IF EXISTS "${db}"`);
+      await dropDatabase(db);
       await admin.$executeRawUnsafe(`CREATE DATABASE "${db}"`);
     }
   }, 60_000);
 
   afterAll(async () => {
     for (const db of [SANDBOX_DB, OTHER_DB]) {
-      await admin?.$executeRawUnsafe(`DROP DATABASE IF EXISTS "${db}"`);
+      await dropDatabase(db);
     }
     await admin?.$disconnect();
   });
+
+  /**
+   * `WITH (FORCE)` — Postgres 13+, and this project is pinned to 17.
+   *
+   * A plain DROP fails with "database is being accessed by other users" if any
+   * connection lingers: a `migrationsTableExists` client, or a `prisma migrate
+   * deploy` the script spawned in a previous run. That surfaces as a failing
+   * `beforeAll` and takes the whole real-DB block red for a reason unrelated to
+   * anything under test. Observed once, after a run whose mutated script left
+   * the sandbox mid-migration; it does not reproduce on clean runs, so this is
+   * precautionary rather than a fix for a diagnosed defect — but the required
+   * check is not the place to find out.
+   */
+  async function dropDatabase(db: string): Promise<void> {
+    await admin?.$executeRawUnsafe(
+      `DROP DATABASE IF EXISTS "${db}" WITH (FORCE)`,
+    );
+  }
 
   // The positive control. Without it every other test in this file is
   // satisfied by a script that never migrates anything at all, which is the
@@ -153,8 +171,17 @@ describe.skipIf(!testDatabaseUrl)("migrate-if-production.sh (real DB)", () => {
   }, 60_000);
 });
 
-// No database needed: these assert the script refuses before it would connect.
-describe("migrate-if-production.sh (guards that never reach a database)", () => {
+// No TEST_DATABASE_URL needed. Not hermetic, though: three of these do reach
+// `pnpm db:deploy` and attempt a connection, deliberately — that is the only
+// path where the credential meets a third-party CLI. They use fake credentials
+// on port 1.
+//
+// LOAD-BEARING: these run Prisma with cwd = repo root, where the gitignored
+// `.env` holds the PRODUCTION DATABASE_URL (vitest.setup.ts). They are safe
+// only because migrate-if-production.sh always sets DATABASE_URL explicitly on
+// the `pnpm db:deploy` line, and Prisma's dotenv never overrides an
+// already-set variable. Do not "simplify" that line into a bare command.
+describe("migrate-if-production.sh (guards that need no test database)", () => {
   const UNREACHABLE =
     "postgresql://u:p@127.0.0.1:1/adr002_should_never_be_contacted";
 
@@ -271,8 +298,12 @@ describe("migrate-if-production.sh (guards that never reach a database)", () => 
         "postgresql://u:p@ep-x-1-pooler.eu-central-1.aws.neon.tech:1/db",
     });
 
-    // Past BOTH C2 checks — it gets as far as trying to connect, and fails
-    // there because the host is unroutable, which is the point.
+    // POSITIVE first. Two `not.toContain` assertions alone are satisfied by a
+    // run that exited at the `case` statement and never evaluated C2 at all —
+    // so any mutation upstream of the comparison would leave this green while
+    // proving nothing. This line asserts the script actually got past both
+    // checks to the migration itself.
+    expect(run.stdout).toContain("applying pending migrations");
     expect(run.stderr).not.toContain("different databases");
     expect(run.stderr).not.toContain("POOLED");
   }, 60_000);

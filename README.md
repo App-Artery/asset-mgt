@@ -108,9 +108,11 @@ record — keep all three current when anything here changes.
    ([ADR-002](docs/adr/ADR-002-build-gated-migrations.md)). Its absence from
    Preview is the primary guard stopping a preview build from migrating
    production, so **never widen its scope**; the `VERCEL_ENV` check in
-   `scripts/migrate-if-production.sh` is only defence in depth. All enumerated
-   with placeholders in [.env.example](.env.example) — real secrets live only in
-   Vercel env vars and gitignored `.env`.
+   `scripts/migrate-if-production.sh` is only defence in depth. All except
+   `MIGRATE_DATABASE_URL` are enumerated with placeholders in
+   [.env.example](.env.example)
+   ([#33](https://github.com/App-Artery/asset-mgt/issues/33) adds it) — real
+   secrets live only in Vercel env vars and gitignored `.env`.
 
    Note that Production and Preview currently share one Neon project and one
    `AUTH_SECRET` ([#27](https://github.com/App-Artery/asset-mgt/issues/27)), so
@@ -266,9 +268,11 @@ leaves the failed row, the check, and the red build exactly where they were.
 Under incident pressure that costs a revert PR, a review and another failed
 build before anyone notices it changed nothing.
 
-**Resolve first** (state 1, 2 or 3 above). Only then is a revert of the
-migration-bearing commit optional, and only if you also want the schema change
-gone. `migrate deploy` is forward-only and never un-applies anything.
+**Follow the matching state above first** — 1 and 2 are resolved with
+`migrate resolve`, 3 by restoring the file from git, and they are not
+interchangeable. Only then is reverting the migration-bearing commit optional,
+and only to stop the migration re-applying: the schema change itself stays,
+because `migrate deploy` is forward-only and never un-applies anything.
 
 ## Intake artefacts
 

@@ -172,6 +172,13 @@ deferred. Until #31 closes, treat the runbook as untested.
   promoting code ahead of its schema. Only `preview` and `development` skip;
   everything else refuses to build.
 
+  **Deliberate consequence:** creating a Vercel _custom environment_ would fail
+  every build in it, because `VERCEL_ENV` would not be one of the three
+  recognised values. That is the correct direction — a new environment is
+  exactly when someone should have to think about whether it migrates — but it
+  is a choice, not an oversight. Whoever adds one should extend the `case` and
+  its tests, not loosen them. None exist on this project today.
+
 - **C1b** — `VERCEL_ENV=production` with `MIGRATE_DATABASE_URL` unset exits
   non-zero **before** the build. _Adding a fallback turns this red._
 - **C1c** — the script run end-to-end in preview mode reaches `pnpm build`, and
