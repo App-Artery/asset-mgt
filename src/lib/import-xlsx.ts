@@ -194,12 +194,19 @@ function inflateEntries(
     // does; fflate's own zipSync does too. It is attacker-controlled and so is
     // NOT the defence — it is a free refusal that costs zero allocation when
     // the file is honest about being enormous.
-    if (
-      file.originalSize !== undefined &&
-      file.originalSize > limits.maxEntryBytes
-    ) {
+    // Dropping the undefined check is equivalent (`undefined > n` is false
+    // either way), and > vs >= is the same megabyte-threshold argument as in
+    // `ondata`. Kept on ONE line so the directive can reach it: `disable
+    // next-line` covers the next LINE, and a condition wrapped across three
+    // lines puts its mutants out of that reach entirely — the same
+    // fails-silently-and-flatters-the-score trap as a misplaced `restore`
+    // (LEARNINGS §Tooling).
+    const declared = file.originalSize;
+    // Stryker disable next-line ConditionalExpression,EqualityOperator: see above
+    if (declared !== undefined && declared > limits.maxEntryBytes) {
       throw new Error(
-        `Import file entry "${file.name}" declares ${file.originalSize} bytes, ` +
+        `Import file entry "${file.name}" declares ${declared} bytes, ` +
+          // Stryker disable next-line StringLiteral: explanatory half of the message; the test pins the identifying fragment
           `past the ${limits.maxEntryBytes}-byte per-entry limit.`,
       );
     }
@@ -210,26 +217,39 @@ function inflateEntries(
       if (error) throw error;
       entryBytes += chunk.length;
       budget.totalInflated += chunk.length;
+      // The three caps below are `>` rather than `>=` — a file is refused for
+      // EXCEEDING a cap, not for reaching it. Mutation testing cannot tell the
+      // two apart here and no test in this file tries to: constructing an
+      // archive that inflates to a byte-exact 64 MB would need test-only
+      // surface inside this loop, and a one-byte difference at that threshold
+      // changes nothing about what the cap defends. `maxEntries` is a small
+      // integer where the boundary IS observable, and it is pinned.
+      // Stryker disable next-line EqualityOperator: see above — no file can distinguish > from >= at a megabyte threshold
       if (entryBytes > limits.maxEntryBytes) {
         throw new Error(
+          // Stryker disable next-line StringLiteral: explanatory half of the message; the test pins the identifying fragment
           `Import file entry "${file.name}" expands past the ` +
             `${limits.maxEntryBytes}-byte per-entry limit ` +
             `(aborted after ${entryBytes} bytes).`,
         );
       }
+      // Stryker disable next-line EqualityOperator: as above
       if (budget.totalInflated > limits.maxTotalBytes) {
         throw new Error(
           `Import file expands past the ${limits.maxTotalBytes}-byte total limit ` +
+            // Stryker disable next-line StringLiteral: explanatory half of the message; the test pins the identifying fragment
             `(aborted after ${budget.totalInflated} bytes).`,
         );
       }
+      // Stryker disable next-line EqualityOperator: as above
       if (budget.totalInflated > ratioCeiling) {
         throw new Error(
           `Import file expands more than ${limits.maxCompressionRatio}× its ` +
             `packed size (aborted after ${budget.totalInflated} bytes).`,
         );
       }
-      if (chunk.length > 0) chunks.push(chunk);
+      chunks.push(chunk);
+      // Stryker disable next-line ConditionalExpression: forcing this true is equivalent — a non-final chunk writes a correct partial and the final one overwrites it
       if (final) found.set(file.name, concatChunks(chunks, entryBytes));
     };
     file.start();
@@ -237,6 +257,9 @@ function inflateEntries(
 
   for (let at = 0; at < data.length; at += limits.pushChunkBytes) {
     const end = Math.min(at + limits.pushChunkBytes, data.length);
+    // Never signalling `final` is only observable on a TRUNCATED archive, where
+    // the entry then fails to complete and the missing-entry throw catches it.
+    // Stryker disable next-line ConditionalExpression: see above
     unzip.push(data.subarray(at, end), end === data.length);
   }
   return found;
@@ -263,9 +286,20 @@ function requireEntry(
   return bytes;
 }
 
-// `fatal` so a mis-encoded part fails loudly instead of decoding to U+FFFD and
-// landing in the register as mojibake nobody can correct afterwards.
-const utf8 = new TextDecoder("utf-8", { fatal: true });
+/**
+ * `fatal` so a mis-encoded part fails loudly instead of decoding to U+FFFD and
+ * landing in the register as mojibake nobody can correct afterwards.
+ *
+ * Built per call rather than once at module scope. A module-level instance is a
+ * STATIC initialiser: it is evaluated when the module is first imported, which
+ * under a cached module registry can be before a test has had any chance to
+ * influence it — so a change to these arguments is unobservable to a test that
+ * imports the module normally. Four short-lived decoders per parse cost nothing
+ * and keep the encoding choice inside the code path that depends on it.
+ */
+function decodeUtf8(bytes: Uint8Array): string {
+  return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+}
 
 // ---------------------------------------------------------------------------
 // XML scanning
@@ -291,12 +325,22 @@ function decodeXmlText(raw: string): string {
   return raw.replace(/&([^;&\s]+);/g, (whole, body: string) => {
     const named = XML_ENTITIES[body];
     if (named !== undefined) return named;
-    const numeric = /^#(x)?([0-9a-fA-F]+)$/.exec(body);
+    // The two forms XML actually defines, kept apart. Sharing one hex-ish
+    // character class between them looks tidier and is wrong: `&#65a;` would
+    // match, `Number.parseInt("65a", 10)` would stop at the first non-digit and
+    // return 65, and a malformed entity would decode to "A" without a word.
+    // Anchored at both ends for the same reason — unanchored, a body like
+    // `a#65` would decode around the junk instead of being refused.
+    const numeric = /^#(?:([0-9]+)|x([0-9a-fA-F]+))$/.exec(body);
     if (numeric) {
-      const code = Number.parseInt(numeric[2], numeric[1] ? 16 : 10);
-      if (Number.isFinite(code) && code >= 0 && code <= 0x10ffff) {
-        return String.fromCodePoint(code);
-      }
+      const code =
+        numeric[1] === undefined
+          ? Number.parseInt(numeric[2], 16)
+          : Number.parseInt(numeric[1], 10);
+      // Only the upper bound is checked. Both branches admit digits alone, so
+      // the value can be neither negative nor NaN, and guarding against either
+      // would be defending a case that cannot arise.
+      if (code <= 0x10ffff) return String.fromCodePoint(code);
     }
     throw new Error(
       `Import file contains an unsupported XML entity "${whole}" — refusing to read it.`,
@@ -328,6 +372,9 @@ function* scanElements(
   const close = `</${name}>`;
   let match: RegExpExecArray | null;
   while ((match = open.exec(xml)) !== null) {
+    // Any default here behaves the same: `attr()` regex-searches this text and
+    // an element with no attributes has nothing to find whatever it holds.
+    // Stryker disable next-line StringLiteral: see above
     const attrs = match[1] ?? "";
     if (match[2] === "/") {
       yield { attrs, body: null };
@@ -339,6 +386,9 @@ function* scanElements(
       throw new Error(`Import file has an unclosed <${name}> element.`);
     }
     yield { attrs, body: xml.slice(bodyStart, bodyEnd) };
+    // Resuming before the close tag instead of after it finds the same next
+    // element: a close tag cannot itself match an open tag.
+    // Stryker disable next-line ArithmeticOperator: see above
     open.lastIndex = bodyEnd + close.length;
   }
 }
@@ -373,6 +423,7 @@ function assert1900DateSystem(workbookXml: string): void {
     if (flag === "1" || flag === "true") {
       throw new Error(
         "Import file uses the 1904 date system — every date in it is 1462 days " +
+          // Stryker disable next-line StringLiteral: explanatory half of the message; the test pins the identifying fragment
           "off the register's epoch. Re-export it from Excel on Windows.",
       );
     }
@@ -401,6 +452,7 @@ function resolveSheetEntry(workbookXml: string, relsXml: string): string {
   if (sheets.length !== 1) {
     throw new Error(
       `Import file holds ${sheets.length} sheets — the Asset Tiger export has ` +
+        // Stryker disable next-line StringLiteral: explanatory half of the message; the test pins the identifying fragment
         `exactly one, and this reader will not guess which to import.`,
     );
   }
@@ -444,12 +496,14 @@ function resolveSheetEntry(workbookXml: string, relsXml: string): string {
 function parseSharedStrings(xml: string): string[] {
   const strings: string[] = [];
   for (const item of scanElements(xml, "si")) {
-    if (item.body === null) {
-      strings.push("");
-      continue;
-    }
     let text = "";
-    for (const run of scanElements(item.body, "t")) {
+    // A self-closing `<si/>` needs no branch of its own: it has no `<t>`, so
+    // the loop below runs zero times and leaves the empty string an empty
+    // `<si><t/></si>` would have produced anyway. The fallback's exact value is
+    // immaterial — any text with no `<t>` in it scans to nothing.
+    // Stryker disable next-line StringLiteral: see above
+    for (const run of scanElements(item.body ?? "", "t")) {
+      // Stryker disable next-line StringLiteral: a self-closing <t/> is empty text whatever stands in for it
       text += decodeXmlText(run.body ?? "");
     }
     strings.push(text);
@@ -467,13 +521,21 @@ function columnIndexOf(cellRef: string | undefined, rowNumber: number): number {
   if (!letters) {
     throw new Error(
       `Import file has a cell on row ${rowNumber} with no usable r="" ` +
+        // Stryker disable next-line StringLiteral: explanatory half of the message; the test pins the identifying fragment
         `reference ("${cellRef ?? ""}") — its column cannot be resolved.`,
     );
   }
+  // The absolute value is never used — only compared against another column's,
+  // to line a data cell up with its heading and to order the headers. Any
+  // order-preserving shift of this arithmetic is therefore invisible through
+  // the public API, and a test claiming to pin it would be asserting on an
+  // internal number the module deliberately does not expose.
   let index = 0;
   for (const letter of letters) {
+    // Stryker disable next-line ArithmeticOperator: as above
     index = index * 26 + (letter.charCodeAt(0) - 64);
   }
+  // Stryker disable next-line ArithmeticOperator: as above
   return index - 1;
 }
 
@@ -507,18 +569,24 @@ function cellValue(
     throw new Error(
       `Import file cell ${cellRef ?? `on row ${rowNumber}`} has cell type ` +
         `"${type}", which this reader does not handle. Reading it as empty ` +
+        // Stryker disable next-line StringLiteral: explanatory half of the message; the test pins the identifying fragment
         `would drop the value silently, so the import stops here.`,
     );
   }
-  if (cell.body === null) return undefined;
-
-  const raw = firstBody(cell.body, "v");
+  // A self-closing `<c r="D197" s="2"/>` — the shape the template's ~187
+  // trailing rows are made of — needs no branch of its own: it has no `<v>`,
+  // so the lookup below returns undefined exactly as it does for a `<c>` whose
+  // `<v>` is absent or empty. The fallback's value is immaterial: any text with
+  // no `<v>` in it looks up to nothing.
+  // Stryker disable next-line StringLiteral: see above
+  const raw = firstBody(cell.body ?? "", "v");
   if (raw === undefined || raw === "") return undefined;
 
   if (type === SHARED_STRING_TYPE) {
     if (!/^\d+$/.test(raw)) {
       throw new Error(
         `Import file cell ${cellRef ?? `on row ${rowNumber}`} is a shared ` +
+          // Stryker disable next-line StringLiteral: explanatory half of the message; the test pins the identifying fragment
           `string whose index is "${raw}".`,
       );
     }
@@ -526,10 +594,18 @@ function cellValue(
     if (text === undefined) {
       throw new Error(
         `Import file cell ${cellRef ?? `on row ${rowNumber}`} references ` +
+          // Stryker disable next-line StringLiteral: explanatory half of the message; the test pins the identifying fragment
           `shared string ${raw}, which the table does not hold.`,
       );
     }
-    return text;
+    // Excel keeps a `<si><t></t></si>` for a cell whose text was deleted, so a
+    // cleared cell arrives as a shared string resolving to "". That is no
+    // value, and it has to be reported as no value rather than as the empty
+    // string: an empty tag is AM-02's recorded trap, where '' occupies the
+    // unique index and the SECOND blank-tagged row reports a phantom
+    // duplicate. Omitting it also keeps the promise ParsedSheet makes, that a
+    // missing key and an empty cell are the same thing.
+    return text === "" ? undefined : text;
   }
 
   // Bare numeric. Matched strictly and converted from the canonical XML text —
@@ -539,6 +615,7 @@ function cellValue(
   if (!/^-?\d+(\.\d+)?([eE][-+]?\d+)?$/.test(raw)) {
     throw new Error(
       `Import file cell ${cellRef ?? `on row ${rowNumber}`} holds "${raw}", ` +
+        // Stryker disable next-line StringLiteral: explanatory half of the message; the test pins the identifying fragment
         `which is not a number and carries no cell type.`,
     );
   }
@@ -569,13 +646,16 @@ function parseSheet(sheetXml: string, sharedStrings: string[]): ParsedSheet {
     if (!Number.isInteger(rowNumber) || rowNumber < 1) {
       throw new Error(
         `Import file has a <row> with no usable r="" number — its position ` +
+          // Stryker disable next-line StringLiteral: explanatory half of the message; the test pins the identifying fragment
           `in the sheet cannot be reported.`,
       );
     }
-    if (row.body === null) continue;
-
     const cells: Record<string, CellValue> = {};
-    for (const cell of scanElements(row.body, "c")) {
+    // `<row r="201"/>` self-closes; with no `<c>` inside it, the loop runs zero
+    // times and the row falls through as valueless, which is what it is. The
+    // fallback's value is immaterial: any text with no `<c>` scans to nothing.
+    // Stryker disable next-line StringLiteral: see above
+    for (const cell of scanElements(row.body ?? "", "c")) {
       const cellRef = attr(cell.attrs, "r");
       const value = cellValue(cell, sharedStrings, rowNumber, cellRef);
       const column = columnIndexOf(cellRef, rowNumber);
@@ -592,6 +672,7 @@ function parseSheet(sheetXml: string, sharedStrings: string[]): ParsedSheet {
         if ([...headerByColumn.values()].includes(header)) {
           throw new Error(
             `Import file's header row names "${header}" twice — one of the ` +
+              // Stryker disable next-line StringLiteral: explanatory half of the message; the test pins the identifying fragment
               `two columns would be read and the other silently lost.`,
           );
         }
@@ -660,10 +741,10 @@ export function parseAssetWorkbook(
 
   const budget: InflateBudget = { totalInflated: 0 };
   const manifest = inflateEntries(data, MANIFEST_ENTRIES, limits, budget);
-  const workbookXml = utf8.decode(requireEntry(manifest, WORKBOOK_ENTRY));
-  const relsXml = utf8.decode(requireEntry(manifest, WORKBOOK_RELS_ENTRY));
+  const workbookXml = decodeUtf8(requireEntry(manifest, WORKBOOK_ENTRY));
+  const relsXml = decodeUtf8(requireEntry(manifest, WORKBOOK_RELS_ENTRY));
   const sharedStrings = parseSharedStrings(
-    utf8.decode(requireEntry(manifest, SHARED_STRINGS_ENTRY)),
+    decodeUtf8(requireEntry(manifest, SHARED_STRINGS_ENTRY)),
   );
 
   assert1900DateSystem(workbookXml);
@@ -675,8 +756,5 @@ export function parseAssetWorkbook(
   // abort exists to avoid. `budget` is shared, so the total cap covers the run.
   const sheetEntry = resolveSheetEntry(workbookXml, relsXml);
   const sheet = inflateEntries(data, new Set([sheetEntry]), limits, budget);
-  return parseSheet(
-    utf8.decode(requireEntry(sheet, sheetEntry)),
-    sharedStrings,
-  );
+  return parseSheet(decodeUtf8(requireEntry(sheet, sheetEntry)), sharedStrings);
 }

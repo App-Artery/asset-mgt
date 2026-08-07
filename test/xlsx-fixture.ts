@@ -40,8 +40,8 @@ export type RowSpec = { row: number; cells: CellSpec[] };
 export type WorkbookSpec = {
   /** Defaults to a single `<sheet name="Export" r:id="rId1"/>`. */
   sheets?: { name: string; rid: string }[];
-  /** Emits `date1904="1"` on `<workbookPr>` when true. */
-  date1904?: boolean;
+  /** The `date1904` attribute value to emit on `<workbookPr>`. */
+  date1904?: boolean | string;
   /** The rels Target for rId1, relative to `xl/`. */
   sheetTarget?: string;
   /** The archive entry the worksheet is actually stored under. */
@@ -51,6 +51,10 @@ export type WorkbookSpec = {
   rows?: RowSpec[];
   /** Replaces the generated `<sheetData>` body wholesale. */
   sheetDataXml?: string;
+  /** Replaces the generated `xl/workbook.xml` wholesale. */
+  workbookXml?: string;
+  /** Replaces the generated `xl/_rels/workbook.xml.rels` wholesale. */
+  relsXml?: string;
   /** Extra archive entries — a bomb, or a second worksheet. */
   extraEntries?: Record<string, Uint8Array>;
 };
@@ -119,7 +123,11 @@ export function buildWorkbook(spec: WorkbookSpec = {}): Uint8Array {
     `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ` +
     `xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ` +
     `xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">` +
-    `<workbookPr defaultThemeVersion="202300"${spec.date1904 ? ' date1904="1"' : ""}/>` +
+    `<workbookPr defaultThemeVersion="202300"${
+      spec.date1904 === undefined || spec.date1904 === false
+        ? ""
+        : ` date1904="${spec.date1904 === true ? "1" : spec.date1904}"`
+    }/>` +
     `<mc:AlternateContent><mc:Choice Requires="x15">` +
     `<x15ac:absPath url="C:\\Users\\NOBODY\\Downloads\\" ` +
     `xmlns:x15ac="http://schemas.microsoft.com/office/spreadsheetml/2010/11/ac"/>` +
@@ -133,14 +141,19 @@ export function buildWorkbook(spec: WorkbookSpec = {}): Uint8Array {
       .join("") +
     `</sheets></workbook>`;
 
+  // rId1 is written LAST on purpose. Excel emits the parts in no particular
+  // order, and a lookup that took the first <Relationship> instead of matching
+  // on Id would read styles.xml here and still look like it worked if the
+  // worksheet happened to come first.
   const relsXml =
+    spec.relsXml ??
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
-    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
-    `<Relationship Id="rId1" Type="${spec.sheetRelType ?? WORKSHEET_REL_TYPE}" ` +
-    `Target="${escapeXml(sheetTarget)}"/>` +
-    `<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>` +
-    `<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>` +
-    `</Relationships>`;
+      `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+      `<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>` +
+      `<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>` +
+      `<Relationship Id="rId1" Type="${spec.sheetRelType ?? WORKSHEET_REL_TYPE}" ` +
+      `Target="${escapeXml(sheetTarget)}"/>` +
+      `</Relationships>`;
 
   const sharedXml =
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
@@ -154,7 +167,7 @@ export function buildWorkbook(spec: WorkbookSpec = {}): Uint8Array {
       "[Content_Types].xml": strToU8(
         `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types/>`,
       ),
-      "xl/workbook.xml": strToU8(workbookXml),
+      "xl/workbook.xml": strToU8(spec.workbookXml ?? workbookXml),
       "xl/_rels/workbook.xml.rels": strToU8(relsXml),
       "xl/sharedStrings.xml": strToU8(sharedXml),
       "xl/styles.xml": strToU8(
