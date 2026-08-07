@@ -525,6 +525,17 @@ and only then calls `ondata`, so aborting inside `ondata` cannot prevent the
 allocation it is looking at — only the next one. Pushing the whole archive in
 one call therefore allocates a 1 GB entry in full before any abort can fire.
 
+**Mutation testing structurally could not have found this**, which is why the
+hand-written shipped-default test is not redundant with a 99.73% score. Stryker
+generates exactly one mutant for `pushChunkBytes: 16 * 1024` — the arithmetic
+mutator's `16 / 1024` — and kills it. That mutation makes the chunk _smaller_,
+which is the safe direction. **Nothing in its mutator set makes a constant
+bigger**, and bigger is the only direction that matters here. The amended
+`AM-04-C34` therefore asks for a mutation automated tooling does not generate,
+the same shape as the recorded fact that shell scripts and workflow files sit
+outside Stryker's reach entirely. A high mutation score is not evidence that a
+threshold constant is guarded.
+
 What actually bounds it is **how much compressed input a single push carries**.
 Deflate's maximum expansion is ~1032:1; measured against fflate 0.8.3, a
 4,096-byte push of a zeros bomb produced 4,132,129 bytes (1009×). At a 16 KiB
