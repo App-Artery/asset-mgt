@@ -4,7 +4,7 @@ Cloud-based IT asset lifecycle management — an internal tool replacing Asset T
 
 **Status:** scaffold complete — delivery in progress. First story: **AM-01 (auth/roles, Tier 3)**.
 
-**Stack:** Next.js 15 (App Router, dynamic SSR) · Prisma 6 + Postgres 17 · Auth.js v5 (Resend magic-link, JWT sessions) · Tailwind v4 + shadcn/ui · Vitest · Vercel (`fra1`) + Neon (`eu-central-1`). Design and constraints: [docs/DESIGN.md](docs/DESIGN.md) · [ADR-001](docs/adr/ADR-001-vercel-neon-stack.md) · [CLAUDE.md](CLAUDE.md).
+**Stack:** Next.js 15 (App Router, dynamic SSR) · Prisma 6 + Postgres 17 · Auth.js v5 (Resend magic-link, JWT sessions) · Tailwind v4 + shadcn/ui · Vitest · Vercel (`fra1`) + Neon (`eu-central-1`). Design and constraints: [docs/DESIGN.md](docs/DESIGN.md) · [ADR-001](docs/adr/ADR-001-vercel-neon-stack.md) · [ADR-002](docs/adr/ADR-002-build-gated-migrations.md) · [CLAUDE.md](CLAUDE.md).
 
 ## Quickstart
 
@@ -101,12 +101,43 @@ record — keep all three current when anything here changes.
    domain**: the free-tier default sender (`onboarding@resend.dev`) only
    delivers to the Resend account owner, so magic links will NOT reach staff
    until a verified domain backs `AUTH_EMAIL_FROM`.
-4. **Vercel env vars** (Production + Preview): `DATABASE_URL`, `AUTH_SECRET`
-   (`openssl rand -base64 32`), `AUTH_RESEND_KEY`, `AUTH_EMAIL_FROM`. All
-   enumerated with placeholders in [.env.example](.env.example) — real secrets
-   live only in Vercel env vars and gitignored `.env`.
+4. **Vercel env vars** (**Production only** as actually provisioned — see the
+   note below): `DATABASE_URL`, `AUTH_SECRET` (`openssl rand -base64 32`),
+   `AUTH_RESEND_KEY`, `AUTH_EMAIL_FROM`. Plus, at
+   **Production scope only**, `MIGRATE_DATABASE_URL` — the **unpooled**
+   connection string, marked sensitive, used by the build-time migration gate
+   ([ADR-002](docs/adr/ADR-002-build-gated-migrations.md)). Its absence from
+   Preview is the primary guard stopping a preview build from migrating
+   production, so **never widen its scope**; the `VERCEL_ENV` check in
+   `scripts/migrate-if-production.sh` is only defence in depth. All except
+   `MIGRATE_DATABASE_URL` are enumerated with placeholders in
+   [.env.example](.env.example)
+   ([#33](https://github.com/App-Artery/asset-mgt/issues/33) adds it) — real
+   secrets live only in Vercel env vars and gitignored `.env`.
+
+   This line said "(Production + Preview)" until 2026-08-07, describing an
+   intent that was never applied — `vercel env ls` shows all four scoped
+   **Production only**. Two consequences, and the second is the one people trip
+   over: there is no shared signing key, so a preview-minted session does **not**
+   validate on production; and **preview deployments are non-functional**, since
+   the app requires all four through `src/lib/env.ts` and a preview has none of
+   them. Give preview its own values if you want working previews — a
+   **different** `AUTH_SECRET`, and ideally a Neon branch rather than the
+   production database.
+
+   The Neon integration's `STORAGE_*` variables _are_ scoped Production +
+   Preview and do point at the production database. Nothing in this codebase
+   reads them, but they are present in every preview build container
+   ([#27](https://github.com/App-Artery/asset-mgt/issues/27)).
+
 5. **Migrations** — run `pnpm db:deploy` against the Neon `DATABASE_URL` at
-   provisioning (and on schema changes until a deploy pipeline owns it).
+   provisioning. Thereafter the deploy pipeline owns it: a production build
+   applies pending migrations before it builds (ADR-002). That requires a
+   `MIGRATE_DATABASE_URL` environment variable in Vercel — the **unpooled**
+   connection string, **Production scope only**, sensitive. Its absence from
+   Preview is the primary guard stopping a preview build from migrating
+   production, so never widen its scope. See
+   §[Recovering a failed migration](#recovering-a-failed-migration).
 6. **Deploy and seed** — push to `main`. Then provision users against Neon:
    `DATABASE_URL=<neon-pooled-url> SEED_ADMIN_EMAIL=<org-admin-mailbox> STAFF_CSV=seed-data/staff.csv pnpm db:seed`
    (the admin mailbox must be an org mailbox with MFA — client obligation,
@@ -183,6 +214,76 @@ item 5); `psql` has no such default, so pass the connection string every time:
 psql "$TARGET_DATABASE_URL" -f reconcile.sql   # never a bare psql / prisma
 ```
 
+## Recovering a failed migration
+
+> **This runbook is WRITTEN BUT UNPROVEN.** Issue #31 is the condition that
+> executes it against a Neon branch and corrects whatever turns out to be wrong.
+> Until that closes, treat every command here as a first draft and read Prisma's
+> output before acting on it.
+
+Under ADR-002 a production build applies migrations before it builds. A failure
+therefore **blocks every production deploy, hotfixes included** — Prisma P3009:
+_"Until you recover from the failed state, further migrations using
+`prisma migrate deploy` are impossible."_ Recovery needs the direct production
+credential and a human.
+
+Set the target once (unpooled — the pooler breaks Prisma's session advisory
+lock), and never run a bare `prisma` command, because the CLI autoloads `.env`:
+
+```sh
+DIRECT="<the MIGRATE_DATABASE_URL value>"
+DATABASE_URL="$DIRECT" pnpm exec prisma migrate status
+```
+
+There are **three** distinct frozen states and they are not interchangeable.
+
+**1. Failed and rolled back.** The migration errored and Postgres undid it. The
+database matches the previous migration. Mark it rolled back, fix the migration
+file, redeploy:
+
+```sh
+DATABASE_URL="$DIRECT" pnpm exec prisma migrate resolve --rolled-back <migration_name>
+```
+
+**2. Failed and partially applied.** Prisma does **not** guarantee a migration
+file runs in a single transaction — the docs describe migrations that "can only
+be partially executed". **Inspect the schema before choosing.** If some
+statements landed, decide whether to finish them by hand and mark it applied, or
+undo them by hand and mark it rolled back:
+
+```sh
+# only after confirming, by inspection, that the schema now matches the file
+DATABASE_URL="$DIRECT" pnpm exec prisma migrate resolve --applied <migration_name>
+```
+
+Choosing wrong here is not recoverable by re-running anything — this register's
+entire value is its audit trail, so prefer inspecting for an hour over guessing.
+
+**3. Applied but checksum-drifted.** Editing an already-applied migration file
+changes its SHA-256 and `migrate deploy` refuses to proceed. **This repo has two
+hand-edited migrations** (`am02_asset_lifecycle` carries the
+`Asset_tag_required_when_tracked` CHECK; `am03_assignment` carries the partial
+unique index) with "PRESERVE if regenerated" banners. Before ADR-002 a stray
+`prisma migrate dev` regeneration cost a local annoyance; now it freezes
+production deploys. **Fix: restore the file's original content from git** —
+`git log -p -- prisma/migrations/<name>/migration.sql` — rather than resolving
+anything, because the database is correct and the file is not.
+
+**While frozen, reverting the migration-bearing commit does NOT unblock
+deploys** — and reaching for it first is the natural mistake. P3009 is raised
+from the _database_, not the migrations folder: `migrate deploy` pre-flights
+`_prisma_migrations` for rows with `finished_at IS NULL AND rolled_back_at IS
+NULL` before it computes anything pending, so deleting the migration directory
+leaves the failed row, the check, and the red build exactly where they were.
+Under incident pressure that costs a revert PR, a review and another failed
+build before anyone notices it changed nothing.
+
+**Follow the matching state above first** — 1 and 2 are resolved with
+`migrate resolve`, 3 by restoring the file from git, and they are not
+interchangeable. Only then is reverting the migration-bearing commit optional,
+and only to stop the migration re-applying: the schema change itself stays,
+because `migrate deploy` is forward-only and never un-applies anything.
+
 ## Intake artefacts
 
 | Document                                                    | Purpose                                                                      |
@@ -192,6 +293,7 @@ psql "$TARGET_DATABASE_URL" -f reconcile.sql   # never a bare psql / prisma
 | [PRD](docs/intake/asset-mgt/PRD.md)                         | Seven stories in two milestones; Milestone 1 is the Asset Tiger cutover path |
 | [Scaffold design](docs/DESIGN.md)                           | The approved skeleton this repo implements                                   |
 | [ADR-001](docs/adr/ADR-001-vercel-neon-stack.md)            | Vercel + Neon stack decision and accepted risks                              |
+| [ADR-002](docs/adr/ADR-002-build-gated-migrations.md)       | Production migrations run in the Vercel build, gated on `main`               |
 
 ---
 
