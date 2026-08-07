@@ -111,10 +111,24 @@ one.
 - **Instant rollback no longer restores the whole system** — code reverts,
   schema does not. Every migration must be survivable by the immediately
   previous deployment. This is a one-way door per migration shipped.
-- Preview and production continue to share `DATABASE_URL` and `AUTH_SECRET`
-  against one Neon project (#27). **Accepted risk, 2026-08-06**, with
-  per-environment `AUTH_SECRET` and Neon preview branches as the named
-  remediation. This ADR adds DDL to a DML capability preview already has.
+- **Correction, verified 2026-08-07 against Vercel rather than against the
+  README.** An earlier draft of this ADR recorded "preview and production share
+  `DATABASE_URL` and `AUTH_SECRET`" as an accepted risk (#27). That was taken
+  from README §Provisioning step 4, which says "(Production + Preview)" — and
+  that line documents an intent that was never applied. `vercel env ls` shows
+  `DATABASE_URL`, `AUTH_SECRET`, `AUTH_RESEND_KEY` and `AUTH_EMAIL_FROM` all
+  scoped **Production only**. So there is no shared signing key and no
+  cross-environment token forgery, and preview deployments are simply
+  non-functional — which is also why nobody noticed.
+
+  The residual risk is narrower and real: the Neon integration's `STORAGE_*`
+  variables, including `STORAGE_DATABASE_URL` and
+  `STORAGE_DATABASE_URL_UNPOOLED`, **are** scoped Production + Preview and point
+  at the production database. Nothing in this codebase reads them
+  (`grep -rn STORAGE_ src/` is empty), but they sit in every preview build
+  container, reachable by any dependency install script or by code that chooses
+  to read them. That is the same argument this ADR makes above for not consuming
+  them, and it is the live half of #27.
 
 ## Alternatives rejected
 
@@ -133,17 +147,17 @@ one.
 The T3 gate requires every condition met or explicitly overruled, in writing,
 one by one.
 
-| #   | Condition                                                    | Disposition                                                                                                                                                                                                 |
-| --- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| C1  | Preview must not migrate, proven twice, independently        | **Met here**                                                                                                                                                                                                |
-| C2  | Migrate target and runtime target provably the same database | **Met here**                                                                                                                                                                                                |
-| C3  | `/health` asserts the serving code's schema is present       | **Deferred → #29**                                                                                                                                                                                          |
-| C4  | Destructive DDL ships alone, under the two-PR gate           | **Deferred → #30**                                                                                                                                                                                          |
-| C5  | Failure runbook executed before merge                        | **Partially met.** The runbook ships here (README §Recovering a failed migration). Its _execution_ against a Neon branch is deferred → #31. The runbook is therefore **written but unproven**, and says so. |
-| C6  | Preflight uses a Neon branch and always deletes it           | **Deferred → #32**                                                                                                                                                                                          |
-| C7  | The connection string never reaches a log                    | **Met here**                                                                                                                                                                                                |
-| C8  | Production migration requires `main`                         | **Met here**                                                                                                                                                                                                |
-| C9  | Confirm the build command actually took effect               | **Met here** (first production build log pasted into the PR)                                                                                                                                                |
+| #   | Condition                                                    | Disposition                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| --- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| C1  | Preview must not migrate, proven twice, independently        | **Met here**                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| C2  | Migrate target and runtime target provably the same database | **Met here**                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| C3  | `/health` asserts the serving code's schema is present       | **Deferred → #29**                                                                                                                                                                                                                                                                                                                                                                                                              |
+| C4  | Destructive DDL ships alone, under the two-PR gate           | **Deferred → #30**                                                                                                                                                                                                                                                                                                                                                                                                              |
+| C5  | Failure runbook executed before merge                        | **Partially met.** The runbook ships here (README §Recovering a failed migration). Its _execution_ against a Neon branch is deferred → #31. The runbook is therefore **written but unproven**, and says so.                                                                                                                                                                                                                     |
+| C6  | Preflight uses a Neon branch and always deletes it           | **Deferred → #32**                                                                                                                                                                                                                                                                                                                                                                                                              |
+| C7  | The connection string never reaches a log                    | **Met here**                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| C8  | Production migration requires `main`                         | **Met here**                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| C9  | Confirm the build command actually took effect               | **Partially met; completes post-merge.** The preview build of this branch proves `vercel.json`'s `buildCommand` is not overridden by a project setting — the log shows `Running "bash scripts/vercel-build.sh"` followed by the preview skip. That is the half that fails silently. The production half — a `migrate deploy` line in the first production build log — cannot exist before merge and is pasted into the PR then. |
 
 **Overruling rationale for C3, C4, C6 (Kelvin, 2026-08-06):** each is a
 substantial piece of work in its own right, and the core gate closes the

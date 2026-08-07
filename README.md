@@ -101,8 +101,9 @@ record — keep all three current when anything here changes.
    domain**: the free-tier default sender (`onboarding@resend.dev`) only
    delivers to the Resend account owner, so magic links will NOT reach staff
    until a verified domain backs `AUTH_EMAIL_FROM`.
-4. **Vercel env vars** (Production + Preview): `DATABASE_URL`, `AUTH_SECRET`
-   (`openssl rand -base64 32`), `AUTH_RESEND_KEY`, `AUTH_EMAIL_FROM`. Plus, at
+4. **Vercel env vars** (**Production only** as actually provisioned — see the
+   note below): `DATABASE_URL`, `AUTH_SECRET` (`openssl rand -base64 32`),
+   `AUTH_RESEND_KEY`, `AUTH_EMAIL_FROM`. Plus, at
    **Production scope only**, `MIGRATE_DATABASE_URL` — the **unpooled**
    connection string, marked sensitive, used by the build-time migration gate
    ([ADR-002](docs/adr/ADR-002-build-gated-migrations.md)). Its absence from
@@ -114,11 +115,20 @@ record — keep all three current when anything here changes.
    ([#33](https://github.com/App-Artery/asset-mgt/issues/33) adds it) — real
    secrets live only in Vercel env vars and gitignored `.env`.
 
-   Note that Production and Preview currently share one Neon project and one
-   `AUTH_SECRET` ([#27](https://github.com/App-Artery/asset-mgt/issues/27)), so
-   preview deployments read and write the production register and a
-   preview-minted session validates on production. Recorded as accepted risk in
-   ADR-002.
+   This line said "(Production + Preview)" until 2026-08-07, describing an
+   intent that was never applied — `vercel env ls` shows all four scoped
+   **Production only**. Two consequences, and the second is the one people trip
+   over: there is no shared signing key, so a preview-minted session does **not**
+   validate on production; and **preview deployments are non-functional**, since
+   the app requires all four through `src/lib/env.ts` and a preview has none of
+   them. Give preview its own values if you want working previews — a
+   **different** `AUTH_SECRET`, and ideally a Neon branch rather than the
+   production database.
+
+   The Neon integration's `STORAGE_*` variables _are_ scoped Production +
+   Preview and do point at the production database. Nothing in this codebase
+   reads them, but they are present in every preview build container
+   ([#27](https://github.com/App-Artery/asset-mgt/issues/27)).
 
 5. **Migrations** — run `pnpm db:deploy` against the Neon `DATABASE_URL` at
    provisioning. Thereafter the deploy pipeline owns it: a production build
