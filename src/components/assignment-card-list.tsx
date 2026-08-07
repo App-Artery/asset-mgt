@@ -3,6 +3,7 @@ import type { AssetStatus } from "@prisma/client";
 
 import { AssetTagLink } from "@/components/asset-tag-link";
 import { Timestamp } from "@/components/timestamp";
+import { assetDisplayName } from "@/lib/asset-display";
 import { StatusChip } from "@/components/ui/status-chip";
 import {
   DataCard,
@@ -39,8 +40,9 @@ export type AssignmentAssetCard = {
   asset: {
     id: string;
     tag: string | null;
-    make: string;
-    model: string;
+    make: string | null;
+    model: string | null;
+    description: string | null;
     status: AssetStatus;
   };
 };
@@ -111,9 +113,7 @@ function AssetSubjectCard({ row }: { row: AssignmentAssetCard }) {
         <AssetTagLink id={row.asset.id} tag={row.asset.tag} />
         <StatusChip status={row.asset.status} />
       </DataCardHeadline>
-      <span className="text-sm">
-        {row.asset.make} {row.asset.model}
-      </span>
+      <span className="text-sm">{assetDisplayName(row.asset)}</span>
       <DataCardMeta parts={dateParts(row)} />
       <ConditionNote notes={row.conditionNotes} />
     </DataCard>

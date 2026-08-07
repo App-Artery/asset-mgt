@@ -76,6 +76,7 @@ describe.skipIf(!testDatabaseUrl)("assignment and returns (real DB)", () => {
       categoryId,
       make: "Dell",
       model: "Latitude 5450",
+      description: null,
       serial: null,
       purchasedAt: null,
       purchasePrice: null,
@@ -83,6 +84,10 @@ describe.skipIf(!testDatabaseUrl)("assignment and returns (real DB)", () => {
       warrantyUntil: null,
       condition: AssetCondition.NEW,
       siteId: null,
+      poNumber: null,
+      costCentre: null,
+      department: null,
+      location: null,
       status: AssetStatus.IN_STOCK,
       actorId,
     });

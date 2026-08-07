@@ -1,5 +1,6 @@
 import type { AssetStatus } from "@prisma/client";
 
+import { assetDisplayName } from "@/lib/asset-display";
 import { StatusChip } from "@/components/ui/status-chip";
 import {
   DataCard,
@@ -27,8 +28,9 @@ import {
 export type AssetCardRow = {
   id: string;
   tag: string | null;
-  make: string;
-  model: string;
+  make: string | null;
+  model: string | null;
+  description: string | null;
   status: AssetStatus;
   categoryName: string;
   siteName: string | null;
@@ -61,9 +63,7 @@ export function AssetCardList({ assets }: { assets: AssetCardRow[] }) {
             )}
             <StatusChip status={asset.status} />
           </DataCardHeadline>
-          <span className="text-sm">
-            {asset.make} {asset.model}
-          </span>
+          <span className="text-sm">{assetDisplayName(asset)}</span>
           <DataCardMeta
             parts={[asset.holder?.name, asset.siteName, asset.categoryName]}
           />

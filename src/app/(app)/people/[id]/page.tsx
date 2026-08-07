@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { assetDisplayName } from "@/lib/asset-display";
 import { requireRole } from "@/lib/authz";
 import { exactTimestamp } from "@/lib/relative-time";
 import { AssetTagLink } from "@/components/asset-tag-link";
@@ -200,9 +201,7 @@ function AssetCells({ assignment }: { assignment: PersonAssignmentRow }) {
       <TableCell>
         <AssetTagLink id={assignment.asset.id} tag={assignment.asset.tag} />
       </TableCell>
-      <TableCell>
-        {assignment.asset.make} {assignment.asset.model}
-      </TableCell>
+      <TableCell>{assetDisplayName(assignment.asset)}</TableCell>
       <TableCell>
         <StatusChip status={assignment.asset.status} />
       </TableCell>

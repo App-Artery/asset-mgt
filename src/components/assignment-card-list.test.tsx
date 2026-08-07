@@ -15,6 +15,7 @@ const assetRow = {
     tag: "AST-0412",
     make: "Dell",
     model: "Latitude 5540",
+    description: null,
     status: "ASSIGNED" as const,
   },
 };

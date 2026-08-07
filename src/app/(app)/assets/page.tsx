@@ -4,6 +4,7 @@ import { AssetStatus, type Prisma } from "@prisma/client";
 import { Plus } from "lucide-react";
 import { z } from "zod";
 import { CONDITION_LABELS } from "@/lib/labels";
+import { assetDisplayName } from "@/lib/asset-display";
 import { requireRole } from "@/lib/authz";
 import { getDb } from "@/lib/db";
 import { assetSearchWhere, normaliseSearchTerm } from "@/lib/asset-search";
@@ -311,6 +312,7 @@ export default async function AssetsPage({
         tag: true,
         make: true,
         model: true,
+        description: true,
         status: true,
         condition: true,
         category: { select: { name: true } },
@@ -445,6 +447,7 @@ export default async function AssetsPage({
     tag: asset.tag,
     make: asset.make,
     model: asset.model,
+    description: asset.description,
     status: asset.status,
     categoryName: asset.category.name,
     siteName: asset.site?.name ?? null,
@@ -726,9 +729,7 @@ export default async function AssetsPage({
                   <TableCell>
                     <AssetTagLink id={row.id} tag={row.tag} />
                   </TableCell>
-                  <TableCell>
-                    {row.make} {row.model}
-                  </TableCell>
+                  <TableCell>{assetDisplayName(row)}</TableCell>
                   <TableCell>{row.categoryName}</TableCell>
                   <TableCell>
                     <StatusChip status={row.status} />
