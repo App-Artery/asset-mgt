@@ -30,6 +30,18 @@ on:
       - "src/lib/asset-admin.ts"
       - "src/lib/sign-in-policy.ts"
       - "src/components/confirm-action-dialog.tsx"
+      # AM-04's four (advisor condition C33). Added to `mutate` and, for a
+      # while, not here — which is the drift this comment warns about, arriving
+      # in the very story that extended the list. It went unnoticed because the
+      # new tests matched the `src/lib/*.test.ts` glob below, so the job did
+      # trigger; a later PR editing only `import-run.ts` would have skipped it
+      # silently. A path list that happens to be covered by a neighbouring glob
+      # is not in sync, it is lucky.
+      - "src/lib/import-map.ts"
+      - "src/lib/import-xlsx.ts"
+      - "src/lib/asset-import.ts"
+      - "src/lib/import-run.ts"
+      - "scripts/import-assets.ts"
       - "src/lib/*.test.ts"
       - "src/lib/*.integration.test.ts"
       - "src/components/confirm-action-dialog.test.tsx"
