@@ -381,26 +381,41 @@ not a path join — structural, not a sanitiser.
 
 ---
 
-## 8. Surface — CLI, with a decision outstanding
+## 8. Surface — CLI, settled
 
-**The advisor ruled CLI, no upload endpoint. This contradicts Kelvin's recorded
-choice of an ADMIN_IT web page and is the one open item in this design.**
+**Decision (Kelvin, 2026-08-07): CLI only, as ruled.** The design first recorded
+a preference for an ADMIN_IT web upload page; the advisor ruled against it and
+the ruling is accepted in full. No overrule to record, and `AM-04-C10`'s F5
+branch closes.
 
-The advisor credits the parser choice as defusing the _dependency_ leg of its
+The advisor credits the `fflate` choice as defusing the _dependency_ leg of its
 argument. The leg that survives is **architectural, not security**: `--commit`
 needs the unpooled connection and a session advisory lock (§6.3), runs ~400
 sequential row transactions, and does not fit a Vercel function's execution
 shape. A one-time cutover does not justify a permanent endpoint.
 
-CLI also dissolves the whole F5 sub-question list by construction: no upload, no
-size limit, no server-side dry-run state, and authorisation is possession of
-`DATABASE_URL` — the same boundary the two existing seed scripts already sit
-behind.
+CLI dissolves the whole F5 sub-question list by construction: no upload, no size
+limit, no server-side dry-run state, and authorisation is possession of
+`DATABASE_URL` — the same boundary `scripts/seed-staff.ts` and
+`scripts/seed-reference.ts` already sit behind, with `actorId: null` per the
+established "system action (seed script)" convention rather than an impersonated
+admin.
 
-**The middle path the advisor explicitly permits:** a **web dry-run**
-(read-only, fast, and it gives the admin the `C9`/`C16` sign-off screens
-naturally) with **`--commit` still on the CLI**, provided `requireRole("ADMIN_IT")`
-is the first statement, the §7.2 caps apply, and `C21`'s hash binding holds.
+The §7.2 zip caps still apply. They are not upload defences — they are
+malformed-file defences, and a file mailed to an engineer is no more trustworthy
+than one posted to an endpoint.
+
+**Consequence for the sign-off gates.** `C9` (assignee resolution) and `C16`
+(category/site census) need a human to read a list and sign it. With no web
+screen, the dry-run writes a **report file** the IT admin reads and signs — the
+artefact the cutover checklist already calls for. That is a stronger record than
+a screen: it is attachable to the sign-off.
+
+**Not built here, and named so it is not silently lost:** the review screens the
+web option would have given (`C9`/`C16` in the browser). If the client wants them
+later they are a read-only surface over `ImportBatch`, and `AM-04-C6`'s
+no-personal-data rule on the persisted report is what makes that surface cheap —
+which is the other reason to hold that line now.
 
 ### 8.1 How "the committed data is the previewed data" is proved (`C21`)
 
