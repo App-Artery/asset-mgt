@@ -6,6 +6,7 @@ import {
   type PrismaClient,
 } from "@prisma/client";
 import { createOpenAssignmentTx } from "@/lib/asset-admin";
+import { PERSON_NAME_SELECT } from "@/lib/person-visibility";
 
 /**
  * The AM-04 import write path.
@@ -255,10 +256,15 @@ export async function createHolderResolver(
   resolve: (tx: Tx, displayName: string) => Promise<HolderResolution>;
 }> {
   const byFold = new Map<string, string[]>();
-  // id and name only — no email, no employeeRef. This is not a
-  // `personSelectFor` surface: nothing here is rendered to a reader, and the
-  // narrowest projection that does the job is the one that cannot over-disclose.
-  const people = await db.person.findMany({ select: { id: true, name: true } });
+  // PERSON_NAME_SELECT, not an inline `{ id, name }` (advisor condition C43).
+  // The inline object was identical and could not over-disclose, which is a
+  // good DISCLOSURE argument and the wrong test. The chokepoint's property is
+  // STRUCTURAL — "the only place a Person select is written" — and it is
+  // audited by a documented grep whose own docblock warns that an unexplained
+  // hit teaches the next reviewer to wave hits through. An inline select here
+  // would have been a third such hit, so it weakens the audit even while
+  // being harmless in itself. This call site is named in that docblock.
+  const people = await db.person.findMany({ select: PERSON_NAME_SELECT });
   for (const person of people) {
     const key = fold(person.name);
     const existing = byFold.get(key);

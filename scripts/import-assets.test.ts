@@ -45,7 +45,8 @@ describe("formatReport", () => {
       problems: { "unknown-status": 1 },
       newCategories: ["DOCKING STATION"],
       newSites: ["IITA Nairobi ICIPE Office"],
-      holders: { matched: 1, created: 1, ambiguous: 1 },
+      holders: { matched: 1, created: 1, ambiguous: 1, discarded: 2 },
+      discardedHolderRows: [7, 9],
       outcomes: [
         { kind: "quarantined", sourceRow: 4, problem: "unknown-status" },
       ],
@@ -81,6 +82,14 @@ describe("formatReport", () => {
     expect(out).toMatch(/AMBIGUOUS[^\n]*Ambiguous Twin/);
     // Deduped: one line for Jane, not two.
     expect(out.split("Jane Holder").length - 1).toBe(1);
+  });
+
+  // The client's own sample row is this case: Status "Available" with a holder
+  // named. Silently dropping it would be the AC violation.
+  it("reports discarded holders by row number, never by name", () => {
+    const out = formatReport(result, false);
+    expect(out).toContain("NOT assigned");
+    expect(out).toContain("7, 9");
   });
 
   it("prints both hashes, so the commit can be bound to this review", () => {

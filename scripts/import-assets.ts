@@ -139,6 +139,18 @@ export function formatReport(result: DryRunResult, commit: boolean): string {
   lines.push(
     `  matched ${report.holders.matched}   created ${report.holders.created}   ambiguous ${report.holders.ambiguous}`,
   );
+  // Never silently dropped (the AC). Asset Tiger keeps the last assignee after
+  // check-in, so a name on a row that is not "Checked Out" is history, not
+  // custody — carrying it over would put a named person on the hook for kit
+  // they returned. Row numbers, not names: the operator looks these up in
+  // their own spreadsheet.
+  if (report.holders.discarded > 0) {
+    lines.push(
+      `  ${report.holders.discarded} row(s) name a holder but are NOT assigned —`,
+    );
+    lines.push(`  no assignment created. Source rows:`);
+    lines.push(`  ${report.discardedHolderRows.join(", ")}`);
+  }
   const seen = new Set<string>();
   for (const entry of result.holderSignOff) {
     if (seen.has(entry.name)) continue;

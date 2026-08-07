@@ -202,6 +202,43 @@ describe.skipIf(!testDatabaseUrl)("import run (real DB)", () => {
       );
     });
 
+    // AM-04-C44, and the client's OWN sample row: Status "Available" with a
+    // holder named. Asset Tiger keeps the last assignee after check-in, so the
+    // name is history there and custody here. Opening an assignment would
+    // create `strandedOpen` — the second half of the README reconciliation
+    // query — which can only ever be closed by fabricating a return.
+    it("imports an unassigned row that names a holder, WITHOUT an assignment", async () => {
+      const holder = `Discarded Holder ${stem()}`;
+      const row = cells({ Status: "Available", "Assigned to": holder });
+
+      const result = await commit(sheetOf([row]));
+
+      expect(result.report.imported).toBe(1);
+      const asset = await db.asset.findUniqueOrThrow({
+        where: { tag: String(row["Asset Tag ID"]) },
+        include: { assignments: true },
+      });
+      expect(asset.status).toBe(AssetStatus.IN_STOCK);
+      // The invariant: an open assignment IF AND ONLY IF status is ASSIGNED.
+      expect(asset.assignments).toHaveLength(0);
+      // …and no stub person invented for someone who is not holding anything.
+      expect(await db.person.count({ where: { name: holder } })).toBe(0);
+    });
+
+    it("REPORTS the discarded holder rather than dropping it silently", async () => {
+      const row = cells({
+        Status: "Available",
+        "Assigned to": `Reported Holder ${stem()}`,
+      });
+
+      const result = await commit(sheetOf([row]));
+
+      expect(result.report.holders.discarded).toBe(1);
+      expect(result.report.discardedHolderRows).toEqual([2]);
+      // By ROW NUMBER only — the persisted report carries no names (C6).
+      expect(JSON.stringify(result.report)).not.toContain("Reported Holder");
+    });
+
     it("quarantines an ambiguous holder without importing the asset", async () => {
       const name = `Twin ${stem()}`;
       await db.person.create({ data: { name, email: null } });
@@ -305,6 +342,46 @@ describe.skipIf(!testDatabaseUrl)("import run (real DB)", () => {
   });
 
   describe("hashRows", () => {
+    // GOLDEN VALUE (AM-04-C42). The dry-run/commit binding is this digest: if
+    // what hashRows computes ever changes, every previously signed-off batch id
+    // stops matching its own file and --commit refuses for reasons nobody can
+    // diagnose. Pinning a literal is the only assertion that catches a change
+    // to the ALGORITHM as opposed to a change in the data.
+    //
+    // Paired with the fix that turned the raw 0x00-0x03 delimiters into \u
+    // escapes: this exact digest was captured BEFORE that change and is
+    // asserted after, which is what proves the two are byte-identical at
+    // runtime rather than merely believed to be.
+    it("computes a known digest for a fixed sheet", () => {
+      const fixed: ParsedSheet = {
+        headers: ["Asset Tag ID", "Cost"],
+        rows: [
+          {
+            rowNumber: 2,
+            cells: { "Asset Tag ID": "KE001771", Cost: "229.81" },
+          },
+          { rowNumber: 3, cells: { "Asset Tag ID": "KE001772", Cost: 12 } },
+        ],
+      };
+      expect(hashRows(fixed)).toBe(
+        "b187cc81c223f1127678d6c22d704bd60c7b22226b83e8bca89d8ca1072490a1",
+      );
+    });
+
+    // What the delimiters are FOR. Without them both sheets feed the hash the
+    // identical byte sequence "a1b2", and a swapped file could satisfy C21.
+    it("separates key from value, so {a:1,b:2} cannot collide with {ab:12}", () => {
+      const split: ParsedSheet = {
+        headers: [],
+        rows: [{ rowNumber: 1, cells: { a: "1", b: "2" } }],
+      };
+      const joined: ParsedSheet = {
+        headers: [],
+        rows: [{ rowNumber: 1, cells: { ab: "12" } }],
+      };
+      expect(hashRows(split)).not.toBe(hashRows(joined));
+    });
+
     it("is stable across cell ORDER but not across values", async () => {
       const base = cells();
       const reordered = Object.fromEntries(
