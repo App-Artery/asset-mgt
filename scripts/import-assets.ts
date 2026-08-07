@@ -10,6 +10,25 @@
 //   DIRECT_DATABASE_URL  target database, UNPOOLED (required — see below)
 //   DATABASE_URL         fallback when DIRECT_DATABASE_URL is unset
 //
+// ## Run it through the package script, not bare tsx
+//
+// `pnpm db:import` passes `--conditions=react-server`, and WITHOUT IT THIS
+// SCRIPT CANNOT START. The modules it needs (`import-run.ts`, `asset-import.ts`
+// and `asset-admin.ts` behind them) begin with `import "server-only"`, whose
+// package exports resolve to a module that throws on any condition except
+// `react-server`. Next.js supplies that condition; a plain Node process does
+// not, so the import throws before a single row is read.
+//
+// The test suite cannot catch this, and that is worth stating plainly: vitest
+// aliases `server-only` to `test/server-only-stub.ts`, so every unit and
+// integration test exercises these modules with the guard already removed. Only
+// running the CLI for real reaches it. It was found by exactly that, after the
+// tests were green.
+//
+// The alternative — dropping `server-only` from those modules — was rejected:
+// they legitimately must never reach a client bundle, and the marker is what
+// makes that a build error rather than a review question.
+//
 // ## Why there is no web upload page
 //
 // The advisor ruled CLI-only for AM-04 and the ruling was accepted in full. The

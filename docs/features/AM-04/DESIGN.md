@@ -485,6 +485,37 @@ named test fail.
 
 ---
 
+## 9.2 Two things found by running it, that testing could not find
+
+Recorded because both are the kind of defect a green suite actively conceals.
+
+**`server-only` stops the CLI from starting at all.** `import-run.ts`,
+`asset-import.ts` and `asset-admin.ts` behind them begin with
+`import "server-only"`, whose package exports resolve to a throwing module on
+any condition except `react-server`. Next.js supplies that condition; a plain
+Node process does not. **The test suite cannot catch this**: vitest aliases
+`server-only` to `test/server-only-stub.ts`, so every unit and integration test
+exercises those modules with the guard already removed. 600 green tests, and
+`pnpm db:import` threw before reading a row. Fixed by passing
+`--conditions=react-server` in the package script — not by dropping the marker,
+which is what keeps these modules out of a client bundle.
+
+**fflate's inflate is not chunk-abortable the way the ruling assumed.**
+`AM-04-C34` requires "a streaming inflate with a hard byte-count abort", on the
+reasoning that a size check after `unzipSync` is a post-mortem. Correct, but
+incomplete: fflate's `Inflate` produces _all_ output for a push inside `inflt()`
+and only then calls `ondata`, so aborting inside `ondata` cannot prevent the
+allocation it is looking at — only the next one. Pushing the whole archive in
+one call therefore allocates a 1 GB entry in full before any abort can fire.
+
+What actually bounds it is **how much compressed input a single push carries**.
+Deflate's maximum expansion is ~1032:1; measured against fflate 0.8.3, a
+4,096-byte push of a zeros bomb produced 4,132,129 bytes (1009×). At a 16 KiB
+push the worst case is ~16.5 MB regardless of the entry's real size. The
+condition is met, but by bounding the push rather than by trusting the abort.
+
+---
+
 ## 10. Source-file handling
 
 The export lives **outside the repo**, is deleted from the working tree at

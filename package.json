@@ -22,7 +22,7 @@
     "db:deploy": "prisma migrate deploy",
     "db:seed": "dotenv -- tsx scripts/seed-staff.ts",
     "db:seed:reference": "dotenv -- tsx scripts/seed-reference.ts",
-    "db:import": "dotenv -- tsx scripts/import-assets.ts",
+    "db:import": "dotenv -- tsx --conditions=react-server scripts/import-assets.ts",
     "postinstall": "prisma generate",
     "prepare": "husky"
   },
