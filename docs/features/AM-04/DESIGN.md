@@ -372,8 +372,25 @@ compressed / 5 MB uncompressed.
 **The cap that actually matters:** with `unzipSync` a size check is a
 _post-mortem_ — the allocation already happened. And the entry allowlist does not
 save you, because an attacker controlling the file simply names their bomb
-`xl/worksheets/sheet1.xml`. **A streaming inflate with a hard byte-count abort is
-required, not optional**; the allowlist is a second, weaker layer.
+`xl/worksheets/sheet1.xml`; the allowlist is a second, weaker layer.
+
+**TWO controls, and both are load-bearing.** `AM-04-C34` originally read "a
+streaming inflate with a hard byte-count abort is required, not optional". That
+is necessary but not sufficient, and the amended condition says so — see §9.2 for
+the measurement. fflate's `Inflate` materialises the whole of a push before
+`ondata` fires, so the abort alone cannot prevent the allocation it is looking
+at:
+
+- **The push size bounds ONE call.** 16 KiB in, ~16.5 MB out worst case, given
+  deflate's ~1032:1 ceiling. This is what makes the abort _timely_.
+- **The cumulative byte count bounds the TOTAL.** 640 pushes of a 10 MB file
+  still reach ~10 GB without it. This is what makes the total _bounded_.
+
+Neither substitutes for the other, and the sentence "the push size is what bounds
+it, not the abort" is true of peak-per-push and false of cumulative — it is
+precisely the sentence that would get someone to delete the abort as redundant.
+Deleting either must fail a test: the push constant is guarded by the
+shipped-default bomb test, the abort by the lowered-push variant.
 
 **Path traversal, stated positively:** the parser never writes an entry to disk
 and never resolves an entry name as a filesystem path. Exact-string allowlist,

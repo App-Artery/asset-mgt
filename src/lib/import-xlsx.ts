@@ -118,6 +118,20 @@ export type XlsxLimits = {
    * unpacked size: a 1 GB entry is allocated in full before `ondata` is reached
    * even once. Verified — one `push(data, true)` of an 8 MB bomb yielded a
    * single 8,388,608-byte `ondata` chunk.
+   *
+   * THIS DOES NOT MAKE THE CUMULATIVE ABORT REDUNDANT, and that is the one
+   * thing to take from this docblock. "The push size is what bounds it, not the
+   * abort" is true of PEAK-PER-PUSH and false of TOTAL: this constant caps a
+   * single inflate call at ~16.5 MB, but 640 such pushes of a 10 MB archive
+   * still reach ~10 GB. The push size is what makes the abort TIMELY; the
+   * running byte count in `ondata` is what makes the total BOUNDED. Delete
+   * either and the caps stop holding — for different inputs, which is why one
+   * test cannot cover both:
+   *
+   *   - this constant is guarded by the shipped-default bomb test, which needs
+   *     a fixture LARGER than one push's worst case (48 MB, not 4 MB — a 4 MB
+   *     entry fits inside a single push and its abort cannot be partial);
+   *   - the cumulative abort is guarded by the lowered-push variant.
    */
   pushChunkBytes: number;
 };
